@@ -321,8 +321,7 @@ export class AudioEngine {
     voiceGain.gain.value = level;
     let node = voiceGain;
     const extra = [];
-    const useSpatial = this.spatial && def.spatial !== false;
-    if (useSpatial && behind) {
+    if (this.spatial && behind) {
       const lowpass = ctx.createBiquadFilter();
       lowpass.type = 'lowpass';
       lowpass.frequency.value = B.spatial.behindLowpassHz;
@@ -330,7 +329,7 @@ export class AudioEngine {
       node = lowpass;
       extra.push(lowpass);
     }
-    if (useSpatial && ctx.createStereoPanner) {
+    if (this.spatial && ctx.createStereoPanner) {
       const panner = ctx.createStereoPanner();
       panner.pan.value = clamp(pan, -1, 1);
       node.connect(panner);
@@ -356,7 +355,16 @@ export class AudioEngine {
         console.warn(`合成音が未定義です: ${def.synth}`);
         return false;
       }
-      const rig = { ctx, out: voiceGain, t0: now, rate, noiseBuffer: this.noiseBuffer, sources: voice.sources, end: 0, params };
+      const rig = {
+        ctx,
+        out: voiceGain,
+        t0: now,
+        rate,
+        noiseBuffer: this.noiseBuffer,
+        sources: voice.sources,
+        end: 0,
+        params
+      };
       synth(rig);
       durationSec = rig.end;
     }
