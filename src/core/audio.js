@@ -124,6 +124,89 @@ export const SYNTH = {
     noise(rig, { filter: 'bandpass', f0: 1800, f1: 400, q: 1.1, dur: 0.42, gain: 0.21, attack: 0.04 });
     tone(rig, { type: 'triangle', f0: 260, f1: 130, dur: 0.3, gain: 0.16 });
     tone(rig, { type: 'sine', f0: 620, f1: 300, start: 0.08, dur: 0.35, gain: 0.07 });
+  },
+  vacuumKiss(rig) {
+    noise(rig, { f0: 500, f1: 3400, q: 4, dur: 0.45, gain: 0.26, attack: 0.3 });
+    tone(rig, { f0: 280, f1: 950, dur: 0.42, gain: 0.1, attack: 0.3 });
+    tone(rig, { f0: 900, f1: 180, start: 0.43, dur: 0.07, gain: 0.3, attack: 0.002 });
+    noise(rig, { filter: 'highpass', f0: 3200, f1: 2000, start: 0.43, dur: 0.05, gain: 0.22, attack: 0.002 });
+    noise(rig, { f0: 1800, q: 3, start: 0.52, dur: 0.06, gain: 0.15, attack: 0.004 });
+    noise(rig, { f0: 1300, q: 3, start: 0.61, dur: 0.07, gain: 0.12, attack: 0.004 });
+  },
+  levelDrainKiss(rig) {
+    noise(rig, { f0: 400, f1: 3000, q: 5, dur: 0.75, gain: 0.3, attack: 0.5 });
+    tone(rig, { f0: 700, f1: 160, dur: 0.8, gain: 0.12, attack: 0.05 });
+    tone(rig, { type: 'triangle', f0: 190, f1: 85, start: 0.78, dur: 0.2, gain: 0.32, attack: 0.004 });
+    noise(rig, { filter: 'lowpass', f0: 900, f1: 200, start: 0.78, dur: 0.18, gain: 0.2, attack: 0.004 });
+  },
+  deepDrainKiss(rig) {
+    noise(rig, { f0: 350, f1: 3200, q: 5, dur: 1.0, gain: 0.32, attack: 0.7 });
+    tone(rig, { f0: 600, f1: 140, dur: 1.0, gain: 0.13, attack: 0.1 });
+    tone(rig, { type: 'triangle', f0: 180, f1: 80, start: 0.98, dur: 0.2, gain: 0.34, attack: 0.004 });
+    tone(rig, { type: 'triangle', f0: 160, f1: 70, start: 1.24, dur: 0.24, gain: 0.3, attack: 0.004 });
+    noise(rig, { filter: 'lowpass', f0: 800, f1: 160, start: 0.98, dur: 0.5, gain: 0.18, attack: 0.004 });
+  },
+  pafuDrain(rig) {
+    noise(rig, { filter: 'lowpass', f0: 500, f1: 1200, q: 0.8, dur: 0.5, gain: 0.24, attack: 0.15 });
+    noise(rig, { f0: 800, q: 1, start: 0.2, dur: 0.3, gain: 0.12, attack: 0.1 });
+    tone(rig, { f0: 120, f1: 80, dur: 0.45, gain: 0.14, attack: 0.1 });
+  },
+  drainPulse(rig) {
+    tone(rig, { f0: 140, f1: 45, dur: 0.5, gain: 0.38, attack: 0.01 });
+    noise(rig, { filter: 'lowpass', f0: 900, f1: 150, q: 0.8, dur: 0.4, gain: 0.25, attack: 0.01 });
+    tone(rig, { type: 'triangle', f0: 70, f1: 50, start: 0.1, dur: 0.4, gain: 0.18, attack: 0.02 });
+  },
+  lowMpHeartbeat(rig) {
+    tone(rig, { f0: 70, f1: 45, dur: 0.16, gain: 0.5, attack: 0.004 });
+    tone(rig, { f0: 60, f1: 40, start: 0.18, dur: 0.2, gain: 0.38, attack: 0.004 });
+  },
+  bindRelease(rig) {
+    [392, 494, 587].forEach((f, i) => {
+      tone(rig, { f0: f, start: i * 0.08, dur: 0.8, gain: 0.1, attack: 0.05 });
+    });
+    noise(rig, { filter: 'highpass', f0: 3000, f1: 1800, dur: 0.4, gain: 0.08, attack: 0.1 });
+  },
+  climaxStart(rig) {
+    tone(rig, { f0: 80, f1: 220, dur: 1.2, gain: 0.35, attack: 0.4 });
+    noise(rig, { f0: 400, f1: 5000, q: 3, dur: 1.1, gain: 0.3, attack: 0.6 });
+    tone(rig, { f0: 120, f1: 35, start: 1.1, dur: 0.6, gain: 0.5, attack: 0.004 });
+    noise(rig, { filter: 'lowpass', f0: 3000, f1: 120, q: 0.8, start: 1.1, dur: 0.5, gain: 0.4, attack: 0.004 });
+    tone(rig, { f0: 3800, f1: 3600, start: 1.15, dur: 2.0, gain: 0.03, attack: 0.05 });
+  },
+  climaxPulse(rig) {
+    const p = rig.params?.progress ?? 0;
+    tone(rig, { f0: 100 + 80 * p, f1: 40, dur: 0.35, gain: 0.3 + 0.15 * p, attack: 0.005 });
+    noise(rig, { f0: 600 + 1200 * p, q: 2, dur: 0.3, gain: 0.2, attack: 0.02 });
+    tone(rig, { type: 'triangle', f0: 900 + 600 * p, f1: 300, dur: 0.25, gain: 0.06, attack: 0.01 });
+  },
+  climaxExtend(rig) {
+    tone(rig, { f0: 120, f1: 240, dur: 0.8, gain: 0.3, attack: 0.3 });
+    noise(rig, { f0: 400, f1: 3500, q: 5, dur: 0.7, gain: 0.3, attack: 0.3 });
+    tone(rig, { f0: 70, f1: 45, start: 0.5, dur: 0.16, gain: 0.5, attack: 0.004 });
+    tone(rig, { f0: 60, f1: 40, start: 0.68, dur: 0.2, gain: 0.38, attack: 0.004 });
+  },
+  flashbackHit(rig) {
+    noise(rig, { f0: 300, f1: 6000, q: 5, dur: 0.35, gain: 0.35, attack: 0.3 });
+    tone(rig, { f0: 110, f1: 38, start: 0.33, dur: 0.5, gain: 0.55, attack: 0.004 });
+    noise(rig, { filter: 'lowpass', f0: 2500, f1: 120, q: 0.8, start: 0.33, dur: 0.4, gain: 0.4, attack: 0.003 });
+    tone(rig, { f0: 3800, f1: 3600, start: 0.36, dur: 2.4, gain: 0.04, attack: 0.05 });
+    tone(rig, { f0: 70, f1: 45, start: 0.8, dur: 0.16, gain: 0.4, attack: 0.004 });
+    tone(rig, { f0: 60, f1: 40, start: 0.98, dur: 0.2, gain: 0.3, attack: 0.004 });
+  },
+  priestCast(rig) {
+    [523, 659, 784, 1047].forEach((f, i) => {
+      tone(rig, { f0: f, start: i * 0.09, dur: 0.9, gain: 0.09, attack: 0.06 });
+    });
+    noise(rig, { filter: 'highpass', f0: 3500, f1: 6500, dur: 0.6, gain: 0.06, attack: 0.2 });
+  },
+  buffGain(rig) {
+    tone(rig, { type: 'triangle', f0: 880, dur: 0.18, gain: 0.12, attack: 0.005 });
+    tone(rig, { type: 'triangle', f0: 1320, start: 0.1, dur: 0.3, gain: 0.12, attack: 0.005 });
+  },
+  autoGuard(rig) {
+    tone(rig, { f0: 880, f1: 1760, dur: 0.12, gain: 0.3, attack: 0.002 });
+    tone(rig, { type: 'triangle', f0: 2640, start: 0.02, dur: 0.35, gain: 0.1, attack: 0.002 });
+    noise(rig, { f0: 4000, f1: 1200, q: 3, dur: 0.25, gain: 0.2, attack: 0.005 });
   }
 };
 
@@ -213,9 +296,9 @@ export class AudioEngine {
     return false;
   }
 
-  // opts: { pan: -1〜1, gain: 0〜, behind: 背後ならこもらせる, ally: 仲間なら音量を下げる }
+  // opts: { pan: -1〜1, gain: 0〜, behind: 背後ならこもらせる, ally: 仲間なら音量を下げる, vertical: 前後定位, params: 合成音用 }
   // 戻り値: 鳴らせたら true（ロック解除前は false）
-  playSE(id, { pan = 0, gain = 1, behind = false, ally = false } = {}) {
+  playSE(id, { pan = 0, gain = 1, behind = false, ally = false, vertical = 0, params = {} } = {}) {
     const def = SE_TABLE[id];
     if (!def) {
       console.warn(`未定義のSEです: ${id}`);
@@ -225,7 +308,8 @@ export class AudioEngine {
 
     const { ctx, B } = this;
     const now = ctx.currentTime;
-    const rate = 1 + (Math.random() * 2 - 1) * B.audio.pitchJitter;
+    const jitter = 1 + (Math.random() * 2 - 1) * B.audio.pitchJitter;
+    const rate = jitter * (1 + clamp(vertical, -1, 1) * (B.spatial.verticalPitch ?? 0.04));
     const level = (def.gain ?? 1) * gain * (ally ? B.audio.allyGain : 1);
 
     // 同時発音の上限。超えたら、いちばん古い音を止める
@@ -237,7 +321,8 @@ export class AudioEngine {
     voiceGain.gain.value = level;
     let node = voiceGain;
     const extra = [];
-    if (this.spatial && behind) {
+    const useSpatial = this.spatial && def.spatial !== false;
+    if (useSpatial && behind) {
       const lowpass = ctx.createBiquadFilter();
       lowpass.type = 'lowpass';
       lowpass.frequency.value = B.spatial.behindLowpassHz;
@@ -245,7 +330,7 @@ export class AudioEngine {
       node = lowpass;
       extra.push(lowpass);
     }
-    if (this.spatial && ctx.createStereoPanner) {
+    if (useSpatial && ctx.createStereoPanner) {
       const panner = ctx.createStereoPanner();
       panner.pan.value = clamp(pan, -1, 1);
       node.connect(panner);
@@ -271,7 +356,7 @@ export class AudioEngine {
         console.warn(`合成音が未定義です: ${def.synth}`);
         return false;
       }
-      const rig = { ctx, out: voiceGain, t0: now, rate, noiseBuffer: this.noiseBuffer, sources: voice.sources, end: 0 };
+      const rig = { ctx, out: voiceGain, t0: now, rate, noiseBuffer: this.noiseBuffer, sources: voice.sources, end: 0, params };
       synth(rig);
       durationSec = rig.end;
     }
