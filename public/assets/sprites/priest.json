@@ -1,0 +1,61 @@
+{
+  "frameW": 64,
+  "frameH": 96,
+  "frameCount": 20,
+  "tags": {
+    "idle": {
+      "from": 0,
+      "to": 1,
+      "fps": 2,
+      "loop": true
+    },
+    "walk_down": {
+      "from": 2,
+      "to": 5,
+      "fps": 6,
+      "loop": true
+    },
+    "walk_up": {
+      "from": 6,
+      "to": 9,
+      "fps": 6,
+      "loop": true
+    },
+    "walk_side": {
+      "from": 10,
+      "to": 13,
+      "fps": 6,
+      "loop": true
+    },
+    "hit": {
+      "from": 14,
+      "to": 14,
+      "fps": 8,
+      "loop": false
+    },
+    "panic": {
+      "from": 15,
+      "to": 15,
+      "fps": 6,
+      "loop": true
+    },
+    "trance": {
+      "from": 16,
+      "to": 16,
+      "fps": 6,
+      "loop": true
+    },
+    "flee": {
+      "from": 17,
+      "to": 17,
+      "fps": 6,
+      "loop": true
+    },
+    "cast": {
+      "from": 18,
+      "to": 19,
+      "fps": 6,
+      "loop": false
+    }
+  }
+}
