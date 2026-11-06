@@ -88,7 +88,7 @@ export const B = deepFreeze({
     clicksPerSec: 5
   },
   bound: {
-    tickSec: 5,               // 拘束中の1ターン
+    tickSec: 2,               // 拘束中の1ターン
     pulseSec: 5,              // ドレインパルスの間隔
     firstPulseDelaySec: 1.0,  // 拘束成立から最初のパルスまで
     pulseStaggerSec: 0.35,    // 拘束役ごとにパルスをずらす間隔
@@ -102,18 +102,33 @@ export const B = deepFreeze({
     idleSurrenderSec: 2,
     uniteChance: 0.35,
     unitePushback: 0.25,
-    surrenderPerIdleSec: 0.05
+    surrenderPerIdleSec: 0.05,
+    expShareRate: 1.0
   },
   climax: {
+    // 旧設計との互換用。新コントローラの導入後も使用箇所確認までは維持する。
     lowMpRate: 0.2,
     lowMpRateHighErosion: 0.3,
     highErosionThreshold: 50,
-    drainSec: 10,
+    drainSec: 5,
     drainMul: 1.5,
     hpDamageRate: 0.03,
     afterglowSec: 3,
     noAttackSec: 2.5,
-    fallHabitGain: 1
+    fallHabitGain: 1,
+    maxSec: 15,
+    extendPerClimaxSec: 2,
+    afterglowTurns: 10,
+    afterglowMinTurns: 3,
+    afterglowReducePerClimax: 1,
+    afterglowDrainRate: 0.2,
+    drainMultStart: 3,
+    drainMultEnd: 6,
+    tickSec: 1,
+    startHpLossRate: 0.3,
+    extendPerBinderSec: 5,
+    extendMaxPerClimaxSec: 5,
+    extraBinderDrainMult: 0.5
   },
   erosion: {
     limit: 100,
@@ -210,7 +225,8 @@ export const B = deepFreeze({
     fadeTiles: 8,
     minGain: 0.35,
     behindDot: -0.4,
-    behindLowpassHz: 2200
+    behindLowpassHz: 2200,
+    verticalPitch: 0.04
   },
   // ---- 探索（ステップ1）----
   dungeon: {
@@ -290,7 +306,7 @@ export const B = deepFreeze({
     bound: { strapAlpha: 0.28, pulseAlpha: 0.2 }
   },
   flashback: {
-    durSec: 0.9,
+    durSec: 3,
     inSec: 0.1,
     startMul: 0.8,
     endMul: 1.5,
@@ -298,14 +314,43 @@ export const B = deepFreeze({
     zoomMin: 0.5,
     zoomMax: 2.0,
     maxTintAlpha: 0.25,
-    minIntervalSec: 1.5,
+    minIntervalSec: 8,
     cropMargin: 1.6,
     cropMaxPx: 1536,
     featherStart: 0.7,
     heartsOn: ['charm'],
     heartRing: 6,
     heartPerSpot: 2,
-    reduced: { zoomScale: 0.6, endMul: 1.1, tintScale: 0.5 }
+    reduced: { zoomScale: 0.6, endMul: 1.1, tintScale: 0.5 },
+    erectSec: 3,
+    erectActionDelaySec: 0.35,
+    portraitWaitMs: 250,
+    maxZoom: 2.6,
+    reducedMaxZoom: 1.6,
+    noiseFps: 12
+  },
+  buffs: {
+    durationTurns: 20
+  },
+  priest: {
+    expPerLevel: 120,
+    maxHp: 120,
+    actEveryTurns: 10,
+    healRate: 0.05,
+    defaultTargetRate: 0.3,
+    maxBinders: 2,
+    pulseSec: 3,
+    pulseMp: 8,
+    pulseExp: 6,
+    hitMp: 12,
+    hitExp: 9,
+    mp0HpLossRate: 0.6,
+    rescueHits: 6,
+    charmMax: 100
+  },
+  debug: {
+    spatialLog: false,
+    bindLog: false
   }
 });
 
