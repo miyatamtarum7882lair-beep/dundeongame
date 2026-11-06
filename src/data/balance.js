@@ -103,7 +103,9 @@ export const B = deepFreeze({
     uniteChance: 0.35,
     unitePushback: 0.25,
     surrenderPerIdleSec: 0.05,
-    expShareRate: 1.0
+    expShareRate: 1.0,
+    expDrainPerSec: 0.02,   // 毎秒、「現在レベルの必要EXP」のこの割合を失う（各種倍率が掛かる）
+    expDrainMinLevel: 1     // ラン中のレベルの下限（仮置き）
   },
   climax: {
     // 旧設計との互換用。新コントローラの導入後も使用箇所確認までは維持する。

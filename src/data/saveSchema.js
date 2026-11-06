@@ -89,11 +89,14 @@ export const saveSchema = {
     hero: { hp: 100, maxHp: 100, mp: 300, maxMp: 300, level: 1, exp: 0, regretStacks: 0, weapon: 'sword' },
     allies: {
       mage: { status: 'ACTIVE', hp: 120, mp: 150, charmGauge: 0 },
-      priest: { status: 'ACTIVE', hp: 120, mp: 150, charmGauge: 0 }
+      priest: { status: 'ACTIVE', hp: 120, mp: 150, charmGauge: 0, turnCounter: 0 }
     },
     inventory: [],
     pendingRescue: [],
-    pendingAmbush: null
+    pendingAmbush: null,
+    buffs: [],
+    climaxCount: 0,
+    afterglowTurns: 0
   }
 };
 

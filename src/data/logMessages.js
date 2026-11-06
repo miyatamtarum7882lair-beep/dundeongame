@@ -122,6 +122,30 @@ export const LOG_KINDS = {
   heroDefeated: {
     mark: '■', color: 'red', importance: 'major', se: 'debuffDown',
     text: '主人公は倒れた…（{name}の{skill}）'
+  },
+  climaxStart: {
+    mark: '■', color: 'red', importance: 'major', se: null,
+    text: '限界を超えた… 意識が白く染まっていく（HP -{hpLoss}）'
+  },
+  climaxExtend: {
+    mark: '■', color: 'red', importance: 'minor', se: null,
+    text: '拘束が増え、絶頂が長引く…（+{addSec}秒）'
+  },
+  climaxEnd: {
+    mark: '◇', color: 'cyan', importance: 'major', se: null,
+    text: '絶頂が終わり、拘束が解けた。MPが戻った（余韻 {turns}ターン）'
+  },
+  afterglowEnd: {
+    mark: '◇', color: 'white', importance: 'minor', se: null,
+    text: '余韻が引いていく…'
+  },
+  autoGuard: {
+    mark: '◇', color: 'cyan', importance: 'minor', se: null,
+    text: '余韻で身体が反応し、{name}の拘束を振りほどいた！'
+  },
+  priestBuff: {
+    mark: '◇', color: 'cyan', importance: 'minor', se: 'learn',
+    text: '{ally}の加護！「{buff}」（{turns}ターン）'
   }
 };
 

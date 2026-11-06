@@ -13,6 +13,7 @@ import { TimeMode } from './core/timeMode.js';
 import { AudioEngine } from './core/audio.js';
 import { runDebugAction, DEBUG_ACTIONS } from './core/debugTools.js';
 import { clamp } from './core/util.js';
+import { spatialFromOffset } from './core/spatialPan.js';
 import { FloatLog } from './ui/floatLog.js';
 import { DebugHud } from './ui/debugHud.js';
 import { Exploration } from './dungeon/exploration.js';
@@ -26,6 +27,7 @@ import { BattleFx } from './ui/battleFx.js';
 import { drawEnemyLabels } from './ui/enemyLabels.js';
 import { drawPartyPanel } from './ui/partyPanel.js';
 import { drawDebuffPanel } from './ui/debuffPanel.js';
+import { buildStatusEntries, drawStatusPanel } from './ui/statusPanel.js';
 import {
   recordDefeat, getMarkScore, markTier, MARK_TIER_NAMES, recordEncounter
 } from './battle/learning.js';
@@ -86,6 +88,7 @@ eventState.on('watchdog', (owner) => {
 });
 
 const combat = exploration.combat;
+timeMode.tickSecProvider = () => combat.climax.boundTickSec();
 const boundPortraitIds = new Set();
 let boundPortraitLoading = false;
 function syncBoundPortraits(binders) {
@@ -109,17 +112,9 @@ function spatialAudioOptions(tx, ty) {
     return { pan: 0, vertical: 0, behind: false };
   }
   const hero = exploration.hero;
-  const length = Math.hypot(hero.dir.dx, hero.dir.dy) || 1;
   const dx = tx - hero.tx;
   const dy = ty - hero.ty;
-  const right = (dx * -hero.dir.dy + dy * hero.dir.dx) / length;
-  const forward = (dx * hero.dir.dx + dy * hero.dir.dy) / length;
-  const vertical = clamp(forward / (Math.hypot(dx, dy) || 1), -1, 1);
-  return {
-    pan: clamp(right / B.spatial.fadeTiles, -1, 1) * B.spatial.panStrength,
-    vertical,
-    behind: vertical <= B.spatial.behindDot
-  };
+  return spatialFromOffset(dx, dy, hero.dir, B.spatial);
 }
 combat.on('fx', (e) => battleFx.handle(e));
 combat.on('anim', ({ unit, tag, delay = 0 }) =>
@@ -139,11 +134,14 @@ combat.on('se', ({ id, tx, ty, delay = 0, behind = false, gain = 1, ally = false
 );
 combat.on('log', (kind, params) => floatLog.pushKind(kind, params));
 combat.on('learning', (events) => announceLearning(events));
-combat.on('persist', () => scheduleSave(save));
-combat.on('flashback', ({ id, attr }) => {
-  if (save.settings.flashback === 'off') return;
-  const enemy = exploration.units.find((unit) => unit.speciesId === id);
-  const position = spatialAudioOptions(enemy?.tx, enemy?.ty);
+combat.on('persist', () => {
+  save.currentRun.buffs = combat.buffs.serialize();
+  save.currentRun.afterglowTurns = combat.climax.serialize().afterglowTurns;
+  scheduleSave(save);
+});
+combat.on('flashbackStart', ({ attr, mode, tx, ty }) => {
+  if (mode === 'off') return;
+  const position = spatialAudioOptions(tx, ty);
   audio.playSE('flashback');
   const seId = flashbackSeFor(attr);
   if (seId) audio.playSE(seId, position);
@@ -170,7 +168,11 @@ combat.on('boundEnd', () => {
   syncBoundPortraits([]);
   if (timeMode.mode === 'BOUND') timeMode.leave();
 });
-timeMode.on('boundSecond', () => combat.boundSecond());
+timeMode.on('boundSecond', () => {
+  combat.boundSecond();
+  // 絶頂開始時のHPドレインで倒れた場合は、通常ターン処理を通らないためここで敗北処理を行う。
+  if (combat.defeated) exploration.handleDefeat();
+});
 timeMode.on('boundTick', () => exploration.boundTick());
 
 exploration.on('floorStart', ({ floor, total }) => {
@@ -481,6 +483,14 @@ function render() {
   if (save.settings.showMinimap) drawMinimap(gHires, exploration, B);
   drawExploreHud(gHires, exploration, B);
   drawBoundHud(gHires);
+  drawStatusPanel(
+    gHires,
+    buildStatusEntries({
+      buffs: combat.buffs.entries(),
+      afterglowTurns: combat.climax.afterglowLeft,
+      erectLeftSec: combat.flashback.erectLeftSec()
+    })
+  );
   drawPartyPanel(gHires, exploration, B);
   const minimapBottom = 16 + exploration.map.h * B.explore.minimapScale + 24;
   drawDebuffPanel(gHires, save.persistent, B, {
@@ -500,6 +510,7 @@ function loop(nowMs) {
   debugHud.update(clock.realDtSec);
   handleInput();
   timeMode.update(dt);
+  combat.flashback.update(dt);
   eventState.update(clock.time);
   exploration.update(dt, input, canExplore());
   dungeonView.update(dt, exploration);

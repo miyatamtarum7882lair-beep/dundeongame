@@ -11,6 +11,7 @@ export class TimeMode extends Emitter {
     this.mode = 'TURN';
     this.bound = null;      // { elapsed, secAcc, tickAcc, ticks }
     this.decision = null;   // { total, remaining, unlimited, onTimeout }
+    this.tickSecProvider = null;   // () => 秒。拘束 tick の間隔を外から差し替える
   }
 
   canEnter() {
@@ -59,7 +60,13 @@ export class TimeMode extends Emitter {
 
   // BOUND の次のターンまでの進み具合（0 → 1）
   get boundTickProgress() {
-    return this.bound ? this.bound.tickAcc / this.B.bound.tickSec : 0;
+    return this.bound ? clamp(this.bound.tickAcc / this.boundTickSec(), 0, 1) : 0;
+  }
+
+  // 拘束 tick の間隔（秒）。provider が無効な値を返したら balance.js の値に戻す
+  boundTickSec() {
+    const sec = this.tickSecProvider?.();
+    return Number.isFinite(sec) && sec > 0 ? sec : this.B.bound.tickSec;
   }
 
   // dtSec は共通タイマーの値（ポーズ中は 0）
@@ -79,8 +86,8 @@ export class TimeMode extends Emitter {
     }
 
     b.tickAcc += dtSec;
-    while (this.mode === 'BOUND' && b.tickAcc >= this.B.bound.tickSec) {
-      b.tickAcc -= this.B.bound.tickSec;
+    while (this.mode === 'BOUND' && b.tickAcc >= this.boundTickSec()) {
+      b.tickAcc -= this.boundTickSec();
       b.ticks += 1;
       this.emit('boundTick', b.ticks);   // 主人公以外が1ターン動く（5秒ごと）
     }

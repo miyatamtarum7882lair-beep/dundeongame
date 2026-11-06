@@ -15,6 +15,11 @@ import { addAbilityProgress, getAbilityLevel } from './raceGrowth.js';
 import { getSoftness, softnessEffects, touchChanceAddFor, bindersSoftness } from './softness.js';
 import { rollRate, calcDamage, expNeeded, expReward } from './damage.js';
 import { calcRequiredClicks } from './escape.js';
+import { ClimaxController } from './climaxController.js';
+import { BuffManager, BUFFS, BUFF_IDS } from './buffs.js';
+import { loseHeroExp } from './expDrain.js';
+import { FlashbackController } from './flashback.js';
+import { FLASHBACK_STRONG } from '../data/flashbackData.js';
 
 const WEAPON_NAMES = { sword: '剣', fist: '拳' };
 const ALLY_NAMES = { priest: '僧侶', mage: '魔法使い' };
@@ -41,6 +46,38 @@ export class Combat extends Emitter {
     this.grown = new Set();      // 同じ階では、同じ能力は+1Lvまで
     this.bound = null;
     this.escapeInvulnTurns = 0;
+
+    const run = () => this.save.currentRun;
+    this.buffs = new BuffManager();
+    this.buffs.restore(run().buffs ?? []);
+    this.climax = new ClimaxController({
+      getCount: () => run().climaxCount ?? 0,
+      setCount: (n) => {
+        run().climaxCount = n;
+      },
+      emit: (name, payload) => {
+        this.onClimaxEvent(name, payload);
+        this.emit(name, payload);
+      },
+      releaseBinders: () => this.escapeBound('climax'),
+      restoreMp: () => {
+        this.hs.mp = this.hs.maxMp;
+      },
+      onSecond: (info) => this.climaxSecond(info),
+      getHp: () => this.hs.hp,
+      getMaxHp: () => this.hs.maxHp,
+      loseHp: (n) => {
+        this.hs.hp = Math.max(0, this.hs.hp - n);
+      },
+      onDefeat: () => this.defeatByClimax(),
+      getBinderCount: () => this.bound?.binders.length ?? 1
+    });
+    this.climax.restore({ afterglowTurns: run().afterglowTurns ?? 0 });
+    this.flashback = new FlashbackController({
+      getMode: () => this.save.settings.flashback ?? 'full',
+      emit: (name, payload) => this.emit(name, payload),
+      isBlocked: () => this.climax.isClimax() || this.climax.isAfterglow()
+    });
   }
 
   get hs() {
@@ -84,6 +121,9 @@ export class Combat extends Emitter {
     this.guarding = false;
     this.bound = null;
     this.escapeInvulnTurns = 0;
+    this.buffs.restore(this.save.currentRun.buffs ?? []);
+    this.climax.restore({ afterglowTurns: this.save.currentRun.afterglowTurns ?? 0 });
+    this.flashback.resetFloor();
   }
 
   beginTurn() {
@@ -145,6 +185,7 @@ export class Combat extends Emitter {
 
   // 拳で非拘束の敵を殴ったときの接触ペナルティ（5.3）
   touchCheck(enemy, d) {
+    if (this.climax.isStatusImmune()) return;
     const { B, p } = this;
     const hs = this.hs;
     const hero = this.exp.hero;
@@ -180,8 +221,19 @@ export class Combat extends Emitter {
     const hb = this.body(hero);
     this.fx({ type: 'hearts', delay: d + 0.1, x: hb.x, y: hb.y - 20, count: 7, size: 0.9 });
     this.emit('log', 'touchPenalty', { name: enemy.name, effect });
-    this.emit('flashback', { id: enemy.speciesId, attr, kind: 'touch' });   // 表示はステップ4.5
+    this.requestFlashback('touch', enemy, attr);
     this.emit('persist');
+  }
+
+  requestFlashback(kind, enemy, attr, skillId = null) {
+    this.flashback.request({
+      kind,
+      enemyId: enemy.speciesId,
+      attr,
+      skillId,
+      tx: enemy.tx,
+      ty: enemy.ty
+    });
   }
 
   killEnemy(enemy, d) {
@@ -283,6 +335,10 @@ export class Combat extends Emitter {
   }
 
   startBound(e, skillId) {
+    if (this.climax.blocksBinding()) {
+      this.autoGuardBind(e);
+      return;
+    }
     if (this.bound) return this.addBoundBinder(e, skillId);
     const dx = e.tx - this.exp.hero.tx;
     const dy = e.ty - this.exp.hero.ty;
@@ -304,6 +360,7 @@ export class Combat extends Emitter {
     this.actedThisTurn = true;
     this.emit('anim', { unit: this.exp.hero, tag: 'bound' });
     this.emit('boundStart', { binder: e, skillId, isBackBind });
+    this.requestFlashback('bind', e, SKILL_DEFS[skillId]?.attr ?? this.attrOf(e.speciesId), skillId);
     this.emit('se', { id: SKILL_DEFS[skillId]?.se ?? 'bind', tx: e.tx, ty: e.ty });
     const from = this.head(e);
     const to = this.body(this.exp.hero);
@@ -361,6 +418,7 @@ export class Combat extends Emitter {
         }
       }
       this.emit('boundChanged', { binders: bound.binders.map((b) => b.unit) });
+      this.climax.extend();
     }
     return true;
   }
@@ -395,7 +453,7 @@ export class Combat extends Emitter {
       0
     ) / binders.length;
     const unite = this.B.escape.uniteCoef[Math.min(binders.length, this.B.escape.uniteCoef.length) - 1];
-    return calcRequiredClicks({
+    const base = calcRequiredClicks({
       unite,
       resCoef: 1 + Math.max(0, -Math.max(res, this.B.resist.floor)) / 100 * 0.5,
       yieldCoef: 1 / (1 - 0.35 * bound.surrenderRate),
@@ -403,11 +461,13 @@ export class Combat extends Emitter {
       softEscapeMul: softness.escapeMul,
       isBackBind: bound.isBackBind
     }, this.B);
+    return Math.max(1, Math.round(base * this.buffs.mult('escapeNeed')));
   }
 
   struggle() {
     const bound = this.bound;
     if (!bound) return false;
+    if (this.climax.escapeLocked()) return true;
     bound.idleSec = 0;
     bound.surrenderRate = Math.max(0, bound.surrenderRate - 0.01);
     this.refreshBoundRequirement();
@@ -418,9 +478,164 @@ export class Combat extends Emitter {
     return true;
   }
 
+  // 主人公のEXPを失う。足りなければレベルが下がる
+  drainHeroExp(rate) {
+    const { B, hs } = this;
+    const amount = Math.max(1, Math.round(expNeeded(hs.level, B) * rate));
+    const res = loseHeroExp(hs, amount, {
+      needFn: (lv) => expNeeded(lv, B),
+      levelUp: B.battle.levelUp,
+      minLevel: B.bound.expDrainMinLevel
+    });
+    if (res.levelsLost > 0) {
+      const hb = this.body(this.exp.hero);
+      this.fx({
+        type: 'damage',
+        x: hb.x,
+        y: this.head(this.exp.hero).y - 52,
+        text: `Lv -${res.levelsLost}`,
+        style: 'mp',
+        big: true
+      });
+      this.emit('log', 'levelDown', { level: hs.level });
+    }
+    return res;
+  }
+
+  checkClimaxStart() {
+    if (!this.bound || this.climax.isClimax()) return;
+    this.climax.tryStart({ bound: true, mp: this.hs.mp });
+  }
+
+  // 絶頂中の毎秒処理（ClimaxController.onSecond から）。MPは0なので、EXPが削られ続ける
+  climaxSecond({ drainMult, progress }) {
+    const { B } = this;
+    const bound = this.bound;
+    if (!bound) return;
+    const res = this.drainHeroExp(B.bound.expDrainPerSec * drainMult * this.buffs.mult('drainTaken'));
+    for (const { unit } of bound.binders) {
+      this.gainDrainExperience(unit, res.lost * B.bound.expShareRate);
+    }
+    const n = bound.binders.length;
+    const hb = this.body(this.exp.hero);
+    for (const { unit } of bound.binders) {
+      this.emit('se', {
+        id: 'climaxPulse',
+        tx: unit.tx,
+        ty: unit.ty,
+        behind: bound.isBackBind,
+        gain: 1 / Math.sqrt(n),
+        params: { progress }
+      });
+      this.fx({
+        type: 'stream',
+        from: this.head(unit),
+        to: { ...hb, y: hb.y - 22 },
+        count: 8,
+        durSec: 0.6,
+        arcPx: 30
+      });
+    }
+    this.fx({
+      type: 'hearts',
+      x: hb.x,
+      y: this.head(this.exp.hero).y,
+      count: 6 + Math.round(6 * progress),
+      size: 1.1
+    });
+    this.fx({ type: 'shake', power: 0.6 + 0.8 * progress });
+    this.emit('persist');
+  }
+
+  // ClimaxController のイベントに対する、戦闘側の演出
+  onClimaxEvent(name, payload = {}) {
+    if (name === 'climaxEnd') {
+      this.save.currentRun.afterglowTurns = payload.afterglowTurns ?? 0;
+    } else if (name === 'afterglowTurn') {
+      this.save.currentRun.afterglowTurns = payload.left ?? 0;
+    } else if (name === 'afterglowEnd') {
+      this.save.currentRun.afterglowTurns = 0;
+    }
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    if (name === 'climaxStart') {
+      const first = this.bound?.binders[0]?.unit;
+      this.flashback?.cancel();
+      this.emit('se', {
+        id: 'climaxStart',
+        tx: first?.tx ?? hero.tx,
+        ty: first?.ty ?? hero.ty,
+        behind: this.bound?.isBackBind ?? false
+      });
+      this.fx({ type: 'shake', power: 1.4 });
+      this.fx({ type: 'tint' });
+      this.fx({ type: 'ring', x: hb.x, y: hb.y, r: 70, color: '#ff4fa3' });
+      this.fx({ type: 'hearts', x: hb.x, y: this.head(hero).y, count: 14, size: 1.3 });
+      if (payload.hpLoss) {
+        this.fx({
+          type: 'damage',
+          delay: 0.2,
+          x: hb.x,
+          y: this.head(hero).y,
+          text: String(payload.hpLoss),
+          style: 'hero',
+          big: true
+        });
+      }
+      this.emit('log', 'climaxStart', { hpLoss: payload.hpLoss ?? 0 });
+    } else if (name === 'climaxExtend') {
+      this.emit('se', { id: 'climaxExtend' });
+      this.fx({ type: 'ring', x: hb.x, y: hb.y, r: 90, color: '#ff4fa3' });
+      this.fx({ type: 'hearts', x: hb.x, y: this.head(hero).y, count: 10, size: 1.2 });
+      this.emit('log', 'climaxExtend', { addSec: payload.addSec ?? 0 });
+    } else if (name === 'climaxEnd') {
+      this.fx({ type: 'sparkle', x: hb.x, y: this.head(hero).y });
+      this.emit('log', 'climaxEnd', { turns: payload.afterglowTurns ?? 0 });
+    } else if (name === 'afterglowEnd') {
+      this.emit('log', 'afterglowEnd', {});
+    }
+  }
+
+  // 絶頂開始時のHPドレインで倒れたとき
+  defeatByClimax() {
+    const first = this.bound?.binders[0];
+    if (first && !this.defeated) {
+      this.defeated = {
+        raceId: first.unit.speciesId,
+        skillId: first.skillId,
+        attr: first.attr,
+        name: first.unit.name
+      };
+      const skillName = DEFEAT_SKILLS[first.skillId]?.name ?? first.skillId;
+      this.emit('log', 'heroDefeated', { name: first.unit.name, skill: skillName });
+    }
+    this.emit('anim', { unit: this.exp.hero, tag: 'down' });
+    this.bound = null;
+    this.emit('boundEnd', { escaped: false, defeated: true });
+    this.emit('persist');
+  }
+
+  // 余韻中の拘束攻撃は自動防御する（敵のターンだけ消費する）
+  autoGuardBind(e) {
+    this.actedThisTurn = true;
+    const hb = this.body(this.exp.hero);
+    this.fx({ type: 'ring', x: hb.x, y: hb.y, r: 60, color: '#96dcff' });
+    this.fx({ type: 'sparks', x: hb.x, y: hb.y - 20, color: '#96dcff', count: 8 });
+    this.emit('se', { id: 'autoGuard', tx: e.tx, ty: e.ty });
+    this.emit('log', 'autoGuard', { name: e.name });
+  }
+
   boundSecond() {
     const bound = this.bound;
     if (!bound) return;
+    const wasClimax = this.climax.isClimax();
+    this.checkClimaxStart();
+    if (!this.bound) return;
+    if (wasClimax) {
+      this.climax.update(1);
+      return;
+    }
+    if (this.climax.isClimax()) return;
     bound.elapsed += 1;
     bound.sincePulse += 1;
     bound.pulseTimer += 1;
@@ -436,6 +651,7 @@ export class Combat extends Emitter {
     bound.pulseTimer -= this.B.bound.pulseSec;
     this.boundPulse(bound.sincePulse);
     bound.sincePulse = 0;
+    this.checkClimaxStart();
   }
 
   boundPulse(durationSec) {
@@ -458,11 +674,13 @@ export class Combat extends Emitter {
     const backMul = bound.isBackBind ? B.bound.backAbsorb : 1;
     const surrenderMul = 1 + bound.surrenderRate * 0.8;
     const mul = Math.min(B.bound.absorbCap, drainMul * softness.drainMul * resMul * uniteMul * backMul * surrenderMul);
-    const amount = Math.min(hs.mp, Math.max(1, Math.round(B.bound.mpPerSec * durationSec * mul)));
+    const scale = this.climax.drainScale() * this.buffs.mult('drainTaken');
+    const amount = Math.min(hs.mp, Math.max(1, Math.round(B.bound.mpPerSec * durationSec * mul * scale)));
     hs.mp -= amount;
+    this.drainHeroExp(B.bound.expDrainPerSec * durationSec * mul * scale);
     for (const binder of bound.binders) {
       const { unit, attr, skillId } = binder;
-      this.gainDrainExperience(unit, amount / bound.binders.length);
+      this.gainDrainExperience(unit, amount * B.bound.expShareRate);
       const abilityId = drainAbilityId(attr);
       if (abilityId) this.abilityEvents(addAbilityProgress(this.p, unit.speciesId, abilityId, B, {
         pts: 1, grownThisBattle: this.grown
@@ -497,9 +715,11 @@ export class Combat extends Emitter {
     this.fx({ type: 'sparkle', x: this.body(enemy).x, y: this.head(enemy).y });
   }
 
-  escapeBound() {
+  escapeBound(reason = 'escape') {
     const bound = this.bound;
     if (!bound) return;
+    const byClimax = reason === 'climax';
+    if (!byClimax && this.climax.escapeLocked()) return;
     const hero = this.exp.hero;
     for (const { unit } of bound.binders) {
       const dx = Math.sign(unit.tx - hero.tx);
@@ -509,11 +729,13 @@ export class Combat extends Emitter {
       if (this.exp.map.isWalkable(x, y) && !this.exp.unitAt(x, y)) unit.moveTo(x, y);
       unit.bindImmune = true;
     }
-    this.hs.mp = Math.min(this.hs.maxMp, this.hs.mp + this.B.bound.escapeRecoverMp);
+    if (!byClimax) {
+      this.hs.mp = Math.min(this.hs.maxMp, this.hs.mp + this.B.bound.escapeRecoverMp);
+    }
     this.escapeInvulnTurns = 1;
     this.bound = null;
     this.emit('anim', { unit: hero, tag: 'idle' });
-    this.emit('boundEnd', { escaped: true });
+    this.emit('boundEnd', { escaped: true, reason: byClimax ? 'climax' : 'escape' });
     this.emit('se', { id: 'bindRelease', tx: hero.tx, ty: hero.ty });
     this.emit('persist');
   }
@@ -531,6 +753,8 @@ export class Combat extends Emitter {
     const hero = this.exp.hero;
     const skillName = DEFEAT_SKILLS[skillId]?.name ?? skillId;
     const attr = def.attr ?? this.attrOf(e.speciesId);
+    if (FLASHBACK_STRONG.has(skillId)) this.requestFlashback('strong', e, attr, skillId);
+    else if (skillId === ctx.rememberedSkillId) this.requestFlashback('rematch', e, attr, skillId);
 
     this.actedThisTurn = true;
     const d = this.nextDelay();
@@ -562,7 +786,8 @@ export class Combat extends Emitter {
       const loseMp = (p.debuffs.loseHabit.byRace[e.speciesId] ?? 0) * B.habit.loseMpPerStage;
       const soft = softnessEffects(getSoftness(e.speciesId, attr, B, p.softnessOverrides), B).drainMul;
       const mul = Math.min(B.bound.absorbCap, (1 + B.battle.drainPerLevel * drainLv) * (1 + loseMp) * soft);
-      mpLoss = Math.min(hs.mp, Math.round(hs.maxMp * nums.mpRate * mul * guard));
+      const scale = this.climax.drainScale() * this.buffs.mult('drainTaken');
+      mpLoss = Math.min(hs.mp, Math.round(hs.maxMp * nums.mpRate * mul * guard * scale));
     }
     hs.hp -= hpLoss;
     hs.mp -= mpLoss;
@@ -694,16 +919,17 @@ export class Combat extends Emitter {
     if (!st || st.status !== 'ACTIVE') return false;
     const hs = this.hs;
     const hero = this.exp.hero;
+    if (hs.hp <= 0) return false;
 
-    if (u.cooldown > 0 || hs.hp <= 0) return false;
-    if (hs.hp / hs.maxHp >= B.ally.recoverBelow / 100) return false;
-    if (st.mp < B.ally.healCostMp) return false;
+    st.turnCounter = Math.min(B.priest.actEveryTurns, (st.turnCounter ?? 0) + 1);
+    if (st.turnCounter < B.priest.actEveryTurns) return false;
     if (chebyshev(u.tx, u.ty, hero.tx, hero.ty) > B.ally.healRange) return false;
+    st.turnCounter = 0;
 
-    const amount = Math.min(hs.maxHp - hs.hp, Math.max(1, Math.round(hs.maxHp * B.ally.healRate)));
-    hs.hp += amount;
-    st.mp -= B.ally.healCostMp;
-    u.cooldown = B.ally.healCooldownTurns;
+    const heal = Math.min(hs.maxHp - hs.hp, Math.max(1, Math.round(hs.maxHp * B.priest.healRate)));
+    hs.hp += heal;
+    const buffId = BUFF_IDS[Math.floor(Math.random() * BUFF_IDS.length)];
+    this.buffs.add(buffId);
     this.actedThisTurn = true;
 
     const d = this.nextDelay();
@@ -711,9 +937,18 @@ export class Combat extends Emitter {
     this.emit('anim', { unit: u, tag: 'cast', delay: d });
     this.fx({ type: 'sparkle', delay: d + 0.3, x: hb.x, y: hb.y });
     this.fx({ type: 'hearts', delay: d + 0.3, x: hb.x, y: hb.y - 10, count: 4, size: 0.7 });
-    this.fx({ type: 'damage', delay: d + 0.35, x: hb.x, y: this.head(hero).y, text: `+${amount}`, style: 'heal' });
+    if (heal > 0) {
+      this.fx({ type: 'damage', delay: d + 0.35, x: hb.x, y: this.head(hero).y, text: `+${heal}`, style: 'heal' });
+    }
+    this.fx({ type: 'damage', delay: d + 0.5, x: hb.x, y: this.head(hero).y - 26, text: BUFFS[buffId].label, style: 'heal' });
     this.emit('se', { id: 'priestCast', tx: u.tx, ty: u.ty, delay: d + 0.3, ally: true });
-    this.emit('log', 'allyHeal', { ally: ALLY_NAMES[u.speciesId] ?? u.name, amount });
+    this.emit('se', { id: 'buffGain', delay: d + 0.6 });
+    this.emit('log', 'allyHeal', { ally: ALLY_NAMES[u.speciesId] ?? u.name, amount: heal });
+    this.emit('log', 'priestBuff', {
+      ally: ALLY_NAMES[u.speciesId] ?? u.name,
+      buff: BUFFS[buffId].label,
+      turns: B.buffs.durationTurns
+    });
     this.emit('persist');
     return true;
   }
@@ -727,6 +962,10 @@ export class Combat extends Emitter {
       (u) => u.kind === 'enemy' && chebyshev(u.tx, u.ty, hero.tx, hero.ty) <= 2
     );
 
+    if (!this.bound) this.climax.onHeroTurnEnd();
+    const hadBuffs = this.buffs.items.length > 0;
+    this.buffs.tick();
+
     for (const u of this.exp.units) {
       if (u.cooldown > 0) u.cooldown -= 1;
       if (u.kind !== 'ally') continue;
@@ -736,13 +975,17 @@ export class Combat extends Emitter {
       if (!threat) st.charmGauge = Math.max(0, st.charmGauge - B.ally.charmDecay);
     }
     if (!threat && hs.hp > 0) {
-      hs.hp = Math.min(hs.maxHp, hs.hp + Math.max(1, Math.round(hs.maxHp * B.battle.regenRate)));
+      if (this.climax.hpRegenScale() > 0) {
+        hs.hp = Math.min(hs.maxHp, hs.hp + Math.max(1, Math.round(hs.maxHp * B.battle.regenRate)));
+      }
       hs.mp = Math.min(hs.maxMp, hs.mp + Math.max(1, Math.round(hs.maxMp * B.battle.regenRate)));
     }
     if (this.escapeInvulnTurns > 0) {
       this.escapeInvulnTurns -= 1;
       for (const u of this.exp.units) u.bindImmune = false;
     }
+    this.save.currentRun.buffs = this.buffs.serialize();
+    if (hadBuffs) this.emit('persist');
   }
 
   // ---- 敗北 ----
@@ -781,6 +1024,9 @@ export class Combat extends Emitter {
     p.runCount += 1;
     this.defeated = null;
     this.stunTurns = 0;
+    this.climax.reset();
+    this.buffs.clear();
+    this.flashback?.cancel();
     this.emit('persist');
   }
 }
