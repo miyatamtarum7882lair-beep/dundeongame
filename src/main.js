@@ -1,6 +1,7 @@
 // File: src/main.js
 import { B } from './data/balance.js';
 import { SE_TABLE } from './data/seTable.js';
+import { flashbackSeFor } from './data/flashbackData.js';
 import { ENEMIES_BY_ID, ATTRS } from './data/enemies.js';
 import { DEFEAT_SKILLS } from './data/defeatSkills.js';
 import { loadSave, saveNow, scheduleSave, flushSave } from './core/storage.js';
@@ -86,42 +87,85 @@ eventState.on('watchdog', (owner) => {
 
 const combat = exploration.combat;
 const boundPortraitIds = new Set();
+let boundPortraitLoading = false;
 function syncBoundPortraits(binders) {
   const nextIds = new Set(binders.map((unit) => unit.speciesId));
+  const loading = [];
   for (const id of nextIds) {
     if (boundPortraitIds.has(id)) continue;
     boundPortraitIds.add(id);
-    void preloadPortrait(id);
+    loading.push(preloadPortrait(id));
   }
   for (const id of boundPortraitIds) {
     if (nextIds.has(id)) continue;
     boundPortraitIds.delete(id);
     releasePortrait(id);
   }
+  return Promise.all(loading);
 }
 const later = (sec, fn) => (sec > 0 ? clock.after(sec, fn) : fn());
+function spatialAudioOptions(tx, ty) {
+  if (!Number.isFinite(tx) || !Number.isFinite(ty)) {
+    return { pan: 0, vertical: 0, behind: false };
+  }
+  const hero = exploration.hero;
+  const length = Math.hypot(hero.dir.dx, hero.dir.dy) || 1;
+  const dx = tx - hero.tx;
+  const dy = ty - hero.ty;
+  const right = (dx * -hero.dir.dy + dy * hero.dir.dx) / length;
+  const forward = (dx * hero.dir.dx + dy * hero.dir.dy) / length;
+  const vertical = clamp(forward / (Math.hypot(dx, dy) || 1), -1, 1);
+  return {
+    pan: clamp(right / B.spatial.fadeTiles, -1, 1) * B.spatial.panStrength,
+    vertical,
+    behind: vertical <= B.spatial.behindDot
+  };
+}
 combat.on('fx', (e) => battleFx.handle(e));
 combat.on('anim', ({ unit, tag, delay = 0 }) =>
   later(delay, () => dungeonView.viewFor(unit).play(tag, { once: !['bound', 'bind_down', 'bind_side'].includes(tag) }))
 );
-combat.on('se', ({ id, tx, delay = 0, behind = false }) =>
+combat.on('se', ({ id, tx, ty, delay = 0, behind = false, gain = 1, ally = false, params = {} }) =>
   later(delay, () => {
-    const dx = Number.isFinite(tx) ? tx - exploration.hero.tx : 0;
+    const position = spatialAudioOptions(tx, ty);
     audio.playSE(id, {
-      pan: clamp(dx / B.spatial.fadeTiles, -1, 1) * B.spatial.panStrength,
-      behind
+      ...position,
+      gain,
+      ally,
+      params,
+      behind: behind || position.behind
     });
   })
 );
 combat.on('log', (kind, params) => floatLog.pushKind(kind, params));
 combat.on('learning', (events) => announceLearning(events));
 combat.on('persist', () => scheduleSave(save));
-combat.on('flashback', () => {});
-combat.on('boundStart', () => {
-  syncBoundPortraits(combat.bound?.binders.map((b) => b.unit) ?? []);
-  timeMode.enterBound();
+combat.on('flashback', ({ id, attr }) => {
+  if (save.settings.flashback === 'off') return;
+  const enemy = exploration.units.find((unit) => unit.speciesId === id);
+  const position = spatialAudioOptions(enemy?.tx, enemy?.ty);
+  audio.playSE('flashback');
+  const seId = flashbackSeFor(attr);
+  if (seId) audio.playSE(seId, position);
 });
-combat.on('boundChanged', ({ binders }) => syncBoundPortraits(binders));
+combat.on('boundStart', () => {
+  boundPortraitLoading = true;
+  void (async () => {
+    try {
+      await syncBoundPortraits(combat.bound?.binders.map((b) => b.unit) ?? []);
+    } catch (error) {
+      console.error('拘束画像の読み込みに失敗しました', error);
+    } finally {
+      boundPortraitLoading = false;
+      if (combat.bound) timeMode.enterBound();
+    }
+  })();
+});
+combat.on('boundChanged', ({ binders }) => {
+  void syncBoundPortraits(binders).catch((error) => {
+    console.error('拘束画像の読み込みに失敗しました', error);
+  });
+});
 combat.on('boundEnd', () => {
   syncBoundPortraits([]);
   if (timeMode.mode === 'BOUND') timeMode.leave();
@@ -153,7 +197,7 @@ exploration.on('dungeonClear', () => {
 exploration.start();
 
 function canExplore() {
-  return !clock.paused && timeMode.mode === 'TURN' && eventState.state === 'NONE';
+  return !clock.paused && !boundPortraitLoading && timeMode.mode === 'TURN' && eventState.state === 'NONE';
 }
 
 // ---- 入力 ----
@@ -279,7 +323,9 @@ function runDebugKey(code) {
 function logRect() {
   const { logicalWidth: w, logicalHeight: h } = B.render;
   // 拘束中は、一枚絵パネルを避けて、マップ側の範囲に出す
-  const width = timeMode.mode === 'BOUND' ? w * (1 - B.boundPanel.widthRatio) : w;
+  const width = timeMode.mode === 'BOUND' || boundPortraitLoading
+    ? w * (1 - B.boundPanel.widthRatio)
+    : w;
   return { x: 0, y: 0, w: width, h };
 }
 
@@ -322,7 +368,7 @@ function drawPauseText(g) {
 
 function drawBoundHud(g) {
   const bound = combat.bound;
-  if (timeMode.mode !== 'BOUND' || !bound) return;
+  if ((timeMode.mode !== 'BOUND' && !boundPortraitLoading) || !bound) return;
   const { logicalWidth: w, logicalHeight: h } = B.render;
   const x = Math.round(w * (1 - B.boundPanel.widthRatio));
   const panelW = w - x;
@@ -392,7 +438,7 @@ function drawBoundHud(g) {
       g.font = `12px ${B.ui.fontFamily}`;
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText('画像未登録', centerX, cy + cardH - 47);
+      g.fillText(boundPortraitLoading ? '画像読み込み中' : '画像未登録', centerX, cy + cardH - 47);
     }
     g.restore();
     g.font = `bold 13px ${B.ui.fontFamily}`;

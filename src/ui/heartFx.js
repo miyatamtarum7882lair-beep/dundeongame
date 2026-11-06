@@ -76,7 +76,7 @@ export class HeartFx {
     this.items.push(item);
   }
 
-  burst({ x, y, count = 8, size = 1 }) {
+  burst({ x, y, count = 8, size = 1, color = this.cfg.color }) {
     for (let i = 0; i < count; i++) {
       const life = this.cfg.lifeMin + Math.random() * (this.cfg.lifeMax - this.cfg.lifeMin);
       this.add({
@@ -87,9 +87,26 @@ export class HeartFx {
         rise: this.cfg.riseMin + Math.random() * (this.cfg.riseMax - this.cfg.riseMin),
         sway: (Math.random() - 0.5) * this.cfg.swayPx,
         size: this.cfg.basePx * size * (0.78 + Math.random() * 0.42),
+        color,
         life,
         age: 0,
         image: overrides[i % Math.max(1, overrides.length)] ?? null
+      });
+    }
+  }
+
+  bindHeartWave({ x, y, color = this.cfg.color, count = 10, durSec = 0.65 }) {
+    for (let i = 0; i < count; i++) {
+      this.add({
+        kind: 'wave',
+        x,
+        y,
+        angle: (i / count) * Math.PI * 2,
+        size: this.cfg.basePx * 0.75,
+        color,
+        life: durSec,
+        age: 0,
+        image: null
       });
     }
   }
@@ -140,7 +157,12 @@ export class HeartFx {
       let x;
       let y;
       let alpha;
-      if (item.kind === 'stream' || item.kind === 'projectile') {
+      if (item.kind === 'wave') {
+        const radius = 18 + t * 88;
+        x = item.x + Math.cos(item.angle) * radius;
+        y = item.y + Math.sin(item.angle) * radius;
+        alpha = Math.sin(t * Math.PI);
+      } else if (item.kind === 'stream' || item.kind === 'projectile') {
         const travel = 1 - Math.pow(1 - t, item.kind === 'projectile' ? 1.15 : 1);
         x = item.from.x + (item.to.x - item.from.x) * travel;
         y = item.from.y + (item.to.y - item.from.y) * travel - Math.sin(t * Math.PI) * item.arcPx;
@@ -167,7 +189,7 @@ export class HeartFx {
       } else if (item.image) {
         g.drawImage(item.image, -s / 2, -s / 2, s, s);
       } else {
-        drawHeart(g, s, this.cfg.color);
+        drawHeart(g, s, item.color ?? this.cfg.color);
       }
       g.restore();
     }

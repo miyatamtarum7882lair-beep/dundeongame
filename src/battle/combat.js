@@ -5,6 +5,7 @@ import { Emitter, clamp } from '../core/util.js';
 import { ENEMIES_BY_ID, ATTRS } from '../data/enemies.js';
 import { DEFEAT_SKILLS } from '../data/defeatSkills.js';
 import { SKILL_DEFS } from '../data/skills.js';
+import { joinEffectFor } from '../data/flashbackData.js';
 import { RACE_ABILITIES_BY_ID, drainAbilityId } from '../data/raceAbilities.js';
 import { chebyshev } from '../dungeon/gridMath.js';
 import {
@@ -303,7 +304,7 @@ export class Combat extends Emitter {
     this.actedThisTurn = true;
     this.emit('anim', { unit: this.exp.hero, tag: 'bound' });
     this.emit('boundStart', { binder: e, skillId, isBackBind });
-    this.emit('se', { id: 'bind', tx: e.tx, ty: e.ty });
+    this.emit('se', { id: SKILL_DEFS[skillId]?.se ?? 'bind', tx: e.tx, ty: e.ty });
     const from = this.head(e);
     const to = this.body(this.exp.hero);
     this.fx({ type: 'stream', delay: 0.1, from, to, count: 9, durSec: 0.45, arcPx: 24 });
@@ -317,7 +318,8 @@ export class Combat extends Emitter {
     if (bound.binders.some((b) => b.unit === e)) return false;
     const skill = SKILL_DEFS[skillId];
     const ratio = bound.requiredClicks ? bound.escapeProgress / bound.requiredClicks : 0;
-    bound.binders.push({ unit: e, skillId, attr: skill.attr ?? this.attrOf(e.speciesId) });
+    const attr = skill.attr ?? this.attrOf(e.speciesId);
+    bound.binders.push({ unit: e, skillId, attr });
     e.setDir(this.exp.hero.tx - e.tx, this.exp.hero.ty - e.ty);
     this.emit('anim', { unit: e, tag: bindTag(this.exp.hero.tx - e.tx, this.exp.hero.ty - e.ty) });
     if (pushBack) {
@@ -332,8 +334,32 @@ export class Combat extends Emitter {
         Math.min(bound.requiredClicks, ratio * bound.requiredClicks - this.B.bound.unitePushback * bound.requiredClicks)
       );
       this.emit('log', 'uniteJoin', { name: e.name });
-      this.emit('se', { id: 'unite', tx: e.tx, ty: e.ty });
+      const effect = joinEffectFor(attr);
+      this.emit('se', {
+        id: effect?.se ?? 'unite',
+        tx: e.tx,
+        ty: e.ty,
+        gain: effect?.gain ?? 1
+      });
       this.fx({ type: 'impact', x: this.body(this.exp.hero).x, y: this.body(this.exp.hero).y, size: 46 });
+      const color = effect?.color ? `rgb(${effect.color.join(',')})` : undefined;
+      for (const fx of effect?.fx ?? []) {
+        if (fx === 'kiss') {
+          this.fx({
+            type: 'kiss',
+            x: this.body(this.exp.hero).x,
+            y: this.head(this.exp.hero).y + 10,
+            dx: Math.sign(e.tx - this.exp.hero.tx),
+            dy: Math.sign(e.ty - this.exp.hero.ty)
+          });
+        } else if (fx === 'bindHeartWave') {
+          this.fx({ type: 'bindHeartWave', x: this.body(this.exp.hero).x, y: this.head(this.exp.hero).y, color });
+        } else if (fx === 'hearts') {
+          this.fx({ type: 'hearts', x: this.body(this.exp.hero).x, y: this.head(this.exp.hero).y, count: 9, size: 1, color });
+        } else if (fx === 'sparkle') {
+          this.fx({ type: 'sparkle', x: this.body(this.exp.hero).x, y: this.head(this.exp.hero).y, color });
+        }
+      }
       this.emit('boundChanged', { binders: bound.binders.map((b) => b.unit) });
     }
     return true;
@@ -488,6 +514,7 @@ export class Combat extends Emitter {
     this.bound = null;
     this.emit('anim', { unit: hero, tag: 'idle' });
     this.emit('boundEnd', { escaped: true });
+    this.emit('se', { id: 'bindRelease', tx: hero.tx, ty: hero.ty });
     this.emit('persist');
   }
 
@@ -685,7 +712,7 @@ export class Combat extends Emitter {
     this.fx({ type: 'sparkle', delay: d + 0.3, x: hb.x, y: hb.y });
     this.fx({ type: 'hearts', delay: d + 0.3, x: hb.x, y: hb.y - 10, count: 4, size: 0.7 });
     this.fx({ type: 'damage', delay: d + 0.35, x: hb.x, y: this.head(hero).y, text: `+${amount}`, style: 'heal' });
-    this.emit('se', { id: 'learn', tx: u.tx, ty: u.ty, delay: d + 0.3 });
+    this.emit('se', { id: 'priestCast', tx: u.tx, ty: u.ty, delay: d + 0.3, ally: true });
     this.emit('log', 'allyHeal', { ally: ALLY_NAMES[u.speciesId] ?? u.name, amount });
     this.emit('persist');
     return true;

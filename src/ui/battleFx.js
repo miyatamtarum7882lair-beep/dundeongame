@@ -188,7 +188,7 @@ export class BattleFx {
       case 'sparkle':
         this.items.push({
           kind: 'particles', x: e.x, y: e.y, gravity: -20, alpha: 0.9, age: 0, life: 0.95,
-          parts: makeParticles(12, 20, 70, 2, 4, ['#b8ffcf', '#ffffff', '#ffd36b'], -Math.PI / 2, Math.PI)
+          parts: makeParticles(12, 20, 70, 2, 4, [e.color ?? '#b8ffcf', '#ffffff', '#ffd36b'], -Math.PI / 2, Math.PI)
         });
         break;
       case 'ring':
@@ -212,7 +212,13 @@ export class BattleFx {
       case 'hearts': {
         if (this.reduced) break;
         const s = this.toScreen(e.x, e.y);
-        this.hearts.burst({ x: s.x, y: s.y, count: e.count ?? 8, size: e.size ?? 1 });
+        this.hearts.burst({ x: s.x, y: s.y, count: e.count ?? 8, size: e.size ?? 1, color: e.color });
+        break;
+      }
+      case 'bindHeartWave': {
+        if (this.reduced) break;
+        const s = this.toScreen(e.x, e.y);
+        this.hearts.bindHeartWave({ x: s.x, y: s.y, color: e.color });
         break;
       }
       case 'stream': {
