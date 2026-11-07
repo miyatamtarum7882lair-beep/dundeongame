@@ -5,6 +5,7 @@ import { RACE_ABILITIES, isAbilityAvailable } from '../data/raceAbilities.js';
 
 const SAVE_KEY = 'dungeonGame.save';
 const BROKEN_KEY = 'dungeonGame.save.broken';
+const CHARM_POINTS_KEY = 'dungeonGame.charmPoints.v1';
 const DEBOUNCE_MS = 500;
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -69,8 +70,54 @@ export function migrate(data) {
     hero.maxMp = (typeof hero.maxMp === 'number' ? hero.maxMp : 160) + bonus;
     hero.mp = Math.min(hero.maxMp, (typeof hero.mp === 'number' ? hero.mp : 160) + bonus);
   }
+  if (previousVersion < 11 && data.currentRun?.hero?.level === 1) {
+    data.currentRun.hero.level = 20;
+  }
   data.version = SAVE_VERSION;
   return data;
+}
+
+function storedCharmPoints() {
+  try {
+    const raw = localStorage.getItem(CHARM_POINTS_KEY);
+    if (raw === null) return null;
+    const points = JSON.parse(raw);
+    return isPlainObject(points) ? points : null;
+  } catch {
+    return null;
+  }
+}
+
+function charmPointsFromBackup() {
+  try {
+    const raw = localStorage.getItem(BROKEN_KEY);
+    const data = raw ? JSON.parse(raw) : null;
+    return isPlainObject(data?.persistent?.charmPoints) ? data.persistent.charmPoints : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveCharmPointsNow(charmPoints) {
+  try {
+    localStorage.setItem(CHARM_POINTS_KEY, JSON.stringify(charmPoints ?? {}));
+    return true;
+  } catch (error) {
+    console.error('チャームポイント設定の保存に失敗しました', error);
+    return false;
+  }
+}
+
+function restoreCharmPoints(save) {
+  const standalone = storedCharmPoints();
+  if (standalone !== null) {
+    save.persistent.charmPoints = standalone;
+    return;
+  }
+  const inSave = save.persistent.charmPoints;
+  const recovered = Object.keys(inSave).length ? inSave : charmPointsFromBackup() ?? {};
+  save.persistent.charmPoints = recovered;
+  saveCharmPointsNow(recovered);
 }
 
 export function loadSave() {
@@ -81,11 +128,20 @@ export function loadSave() {
     console.warn('保存領域を読めません。保存なしで開始します', error);
     return createDefaultSave();
   }
-  if (!raw) return createDefaultSave();
+  if (!raw) {
+    const save = createDefaultSave();
+    restoreCharmPoints(save);
+    return save;
+  }
 
   try {
-    const migrated = migrate(JSON.parse(raw));
-    return deepMerge(saveSchema, migrated);
+    const parsed = JSON.parse(raw);
+    const previousVersion = parsed.version ?? 0;
+    const migrated = migrate(parsed);
+    const save = deepMerge(saveSchema, migrated);
+    restoreCharmPoints(save);
+    if (previousVersion < SAVE_VERSION) saveNow(save);
+    return save;
   } catch (error) {
     console.error('セーブデータを読めなかったため、退避して新規で開始します', error);
     try {
@@ -93,7 +149,9 @@ export function loadSave() {
     } catch (backupError) {
       console.error('退避にも失敗しました', backupError);
     }
-    return createDefaultSave();
+    const save = createDefaultSave();
+    restoreCharmPoints(save);
+    return save;
   }
 }
 

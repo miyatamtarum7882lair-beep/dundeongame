@@ -19,6 +19,57 @@ export const B = deepFreeze({
     jpegQuality: 0.95,                          // 上限を超えた JPEG を縮小するときの品質
     exts: ['png', 'jpg', 'jpeg', 'webp']        // 標準の絵を探す拡張子の順番
   },
+  charm: {
+    zoomMin: 1,
+    zoomMax: 5,
+    zoomStep: 0.05,
+    defaultZoom: 2,
+    centerTransparency: 0.4,
+    innerRatio: 0.45,
+    sizePx: 700,
+    offsetPx: 210,
+    sideOffsetPx: 310,
+    anchorX: 640,
+    anchorY: 360,
+    outputPx: 384,
+    fadeInSec: 0.35
+  },
+  drainFx: {
+    edge: {
+      periodSec: 2.6,
+      lowMpStart: 0.5,
+      lowMpAlpha: 0.16,
+      membraneAlpha: 0.10,
+      membraneRiseSec: 0.12,
+      membraneDecaySec: 0.9,
+      capAlpha: 0.22,
+      climaxAlpha: 0.20,
+      climaxCapAlpha: 0.42,
+      color: [255, 95, 170]
+    },
+    flow: {
+      perSec: 7,
+      climaxExtraPerSec: 14,
+      reachPx: 190,
+      lifeSec: 0.9,
+      wobblePx: 18,
+      maxParticles: 140
+    },
+    climax: {
+      orbitCount: 16,
+      orbitRadiusPx: 70,
+      orbitSpeed: 1.6,
+      burstPerSec: 3,
+      burstExtraPerSec: 7,
+      burstReachPx: 170
+    },
+    heartbeat: {
+      startRatio: 0.35,
+      bpmMin: 60,
+      bpmMax: 100,
+      climaxBpm: 120
+    }
+  },
   ui: { fontFamily: '"Noto Sans JP", "Yu Gothic UI", "Hiragino Sans", "Meiryo", sans-serif' },
 
   // ---- 時間・状態 ----
@@ -89,7 +140,7 @@ export const B = deepFreeze({
   },
   bound: {
     tickSec: 2,               // 拘束中の1ターン
-    pulseSec: 5,              // ドレインパルスの間隔
+    pulseSec: 3,              // ドレインパルスの基本間隔
     firstPulseDelaySec: 1.0,  // 拘束成立から最初のパルスまで
     pulseStaggerSec: 0.35,    // 拘束役ごとにパルスをずらす間隔
     mpPerSec: 7,
@@ -113,6 +164,7 @@ export const B = deepFreeze({
     lowMpRateHighErosion: 0.3,
     highErosionThreshold: 50,
     drainSec: 5,
+    chargeSec: 1.2,
     drainMul: 1.5,
     hpDamageRate: 0.03,
     afterglowSec: 3,
@@ -324,8 +376,7 @@ export const B = deepFreeze({
     heartRing: 6,
     heartPerSpot: 2,
     reduced: { zoomScale: 0.6, endMul: 1.1, tintScale: 0.5 },
-    erectSec: 3,
-    erectActionDelaySec: 0.35,
+    erectTurns: 3,
     portraitWaitMs: 250,
     maxZoom: 2.6,
     reducedMaxZoom: 1.6,

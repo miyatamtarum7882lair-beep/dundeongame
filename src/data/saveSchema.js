@@ -2,7 +2,7 @@
 import { ENEMIES } from './enemies.js';
 import { RACE_ABILITIES, isAbilityAvailable } from './raceAbilities.js';
 
-export const SAVE_VERSION = 9;
+export const SAVE_VERSION = 11;
 
 const defaultRaceAbilities = Object.fromEntries(ENEMIES.map((enemy) => [
   enemy.id,
@@ -46,7 +46,8 @@ export const saveSchema = {
     screenShake: true,
     integerScaleOnly: false,
     codexShowNumbers: true,       // 敵図鑑でカモ度の数値を表示する
-    showMinimap: true
+    showMinimap: true,
+    charmCenterTransparency: 0.4
   },
   persistent: {
     runCount: 0,
@@ -80,13 +81,14 @@ export const saveSchema = {
       decoy: 1.0, scentField: 1.0, hostageTalk: 1.0, charmAlly: 1.0
     },
     revengeEnemies: [],   // { id, species, level, stolenSkills, stolenItems, registeredAtRun }
-    characterProfiles: {} // 敵ID・仲間ID → { cx, cy, rx, ry, intro } など
+    characterProfiles: {}, // 敵ID・仲間ID → { cx, cy, rx, ry, intro } など
+    charmPoints: {}   // { [speciesId]: { cx, cy, zoom } }
   },
   currentRun: {
     seed: 0, dungeon: 1, floor: 1, floorState: {}, gold: 0,
     erosion: 0,
     defeatHistory: [],
-    hero: { hp: 100, maxHp: 100, mp: 300, maxMp: 300, level: 1, exp: 0, regretStacks: 0, weapon: 'sword' },
+    hero: { hp: 100, maxHp: 100, mp: 300, maxMp: 300, level: 20, exp: 0, regretStacks: 0, weapon: 'sword' },
     allies: {
       mage: { status: 'ACTIVE', hp: 120, mp: 150, charmGauge: 0 },
       priest: { status: 'ACTIVE', hp: 120, mp: 150, charmGauge: 0, turnCounter: 0 }

@@ -70,6 +70,7 @@ export class ClimaxController {
     this.onDefeat = onDefeat;
     this.getBinderCount = getBinderCount;
     this.phase = 'none'; // 'none' | 'climax'
+    this.chargeElapsed = 0;
     this.elapsed = 0;
     this.duration = 0;
     this.extended = 0;
@@ -78,7 +79,7 @@ export class ClimaxController {
   }
 
   isClimax() {
-    return this.phase === 'climax';
+    return this.phase === 'climax' || this.phase === 'charge';
   }
 
   isAfterglow() {
@@ -87,7 +88,7 @@ export class ClimaxController {
 
   /** 絶頂中は脱出入力を受け付けない。 */
   escapeLocked() {
-    return this.phase === 'climax';
+    return this.isClimax();
   }
 
   /** 余韻中は状態異常・フラッシュバックを受けない。 */
@@ -102,18 +103,18 @@ export class ClimaxController {
 
   /** 絶頂中・余韻中はHPの自然回復を止める。 */
   hpRegenScale() {
-    return this.phase === 'climax' || this.afterglowLeft > 0 ? 0 : 1;
+    return this.isClimax() || this.afterglowLeft > 0 ? 0 : 1;
   }
 
   /** MP/EXPドレインの倍率。絶頂中は専用倍率を使うため1。 */
   drainScale() {
-    if (this.phase === 'climax') return 1;
+    if (this.isClimax()) return 1;
     return this.afterglowLeft > 0 ? B.climax.afterglowDrainRate : 1;
   }
 
   /** 拘束中の boundTick 間隔（秒）。 */
   boundTickSec() {
-    return this.phase === 'climax' ? B.climax.tickSec : B.bound.tickSec;
+    return B.bound.tickSec;
   }
 
   /**
@@ -126,9 +127,10 @@ export class ClimaxController {
     const before = this.getCount();
     this.duration = climaxDurationSec(before);
     this.elapsed = 0;
+    this.chargeElapsed = 0;
     this.secondsDone = 0;
     this.extended = 0;
-    this.phase = 'climax';
+    this.phase = 'charge';
 
     const hpLoss = climaxStartHpLoss(this.getMaxHp());
     const dead = this.getHp() <= hpLoss;
@@ -147,7 +149,7 @@ export class ClimaxController {
    * @returns {number} 実際に延長した秒数
    */
   extend(sec = B.climax.extendPerBinderSec) {
-    if (this.phase !== 'climax') return 0;
+    if (!this.isClimax()) return 0;
     const room = Math.max(0, B.climax.extendMaxPerClimaxSec - this.extended);
     const add = Math.min(sec, room);
     if (add <= 0) return 0;
@@ -163,6 +165,13 @@ export class ClimaxController {
 
   /** 拘束中のリアルタイム更新。dt は秒。敵の拘束判定（tick）を先に処理してから呼ぶこと。 */
   update(dt) {
+    if (this.phase === 'charge') {
+      this.chargeElapsed += dt;
+      if (this.chargeElapsed < B.climax.chargeSec) return;
+      dt = this.chargeElapsed - B.climax.chargeSec;
+      this.phase = 'climax';
+      this.emit('climaxRelease', {});
+    }
     if (this.phase !== 'climax') return;
     this.elapsed = Math.min(this.duration, this.elapsed + dt);
     const target = Math.floor(this.elapsed + 1e-9);
@@ -204,6 +213,7 @@ export class ClimaxController {
   abort() {
     this.phase = 'none';
     this.elapsed = 0;
+    this.chargeElapsed = 0;
     this.secondsDone = 0;
     this.extended = 0;
   }

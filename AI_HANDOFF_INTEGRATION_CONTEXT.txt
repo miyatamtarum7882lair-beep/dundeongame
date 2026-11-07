@@ -1,0 +1,690 @@
+AI HANDOFF: integration source excerpts
+Extracted from the current workspace. Original source files are not changed.
+
+===== src/battle/climaxController.js (complete file) =====
+// File: src/battle/climaxController.js
+import { B } from '../data/balance.js';
+
+function clamp01(v) {
+  return Math.max(0, Math.min(1, v));
+}
+
+/** countBefore = これまでの絶頂回数（今回を含まない）。 */
+export function climaxDurationSec(countBefore) {
+  const c = B.climax;
+  return Math.min(c.maxSec, c.drainSec + c.extendPerClimaxSec * Math.max(0, countBefore));
+}
+
+export function afterglowTurnsFor(countBefore) {
+  const c = B.climax;
+  return Math.max(
+    c.afterglowMinTurns,
+    c.afterglowTurns - c.afterglowReducePerClimax * Math.max(0, countBefore)
+  );
+}
+
+/** 絶頂中の毎秒ドレイン倍率。拘束者が増えるほど大きくなる。 */
+export function climaxDrainMult(progress, binderCount = 1) {
+  const c = B.climax;
+  const base = c.drainMultStart + (c.drainMultEnd - c.drainMultStart) * clamp01(progress);
+  return base * (1 + c.extraBinderDrainMult * Math.max(0, binderCount - 1));
+}
+
+export function climaxStartHpLoss(maxHp) {
+  return Math.max(1, Math.round(maxHp * B.climax.startHpLossRate));
+}
+
+export class ClimaxController {
+  /**
+   * @param {object} deps
+   * @param {() => number} deps.getCount
+   * @param {(n: number) => void} deps.setCount
+   * @param {(name: string, payload?: object) => void} deps.emit
+   * @param {(reason: string) => void} deps.releaseBinders 全拘束者を解除する既存処理
+   * @param {() => void} deps.restoreMp
+   * @param {(info: object) => void} deps.onSecond 絶頂中の毎秒ドレイン処理
+   * @param {() => number} deps.getHp
+   * @param {() => number} deps.getMaxHp
+   * @param {(n: number) => void} deps.loseHp HP を n 減らす（0 未満にしない）
+   * @param {() => void} deps.onDefeat 敗北処理
+   * @param {() => number} [deps.getBinderCount]
+   */
+  constructor({
+    getCount,
+    setCount,
+    emit,
+    releaseBinders,
+    restoreMp,
+    onSecond,
+    getHp,
+    getMaxHp,
+    loseHp,
+    onDefeat,
+    getBinderCount = () => 1,
+  }) {
+    this.getCount = getCount;
+    this.setCount = setCount;
+    this.emit = emit;
+    this.releaseBinders = releaseBinders;
+    this.restoreMp = restoreMp;
+    this.onSecond = onSecond;
+    this.getHp = getHp;
+    this.getMaxHp = getMaxHp;
+    this.loseHp = loseHp;
+    this.onDefeat = onDefeat;
+    this.getBinderCount = getBinderCount;
+    this.phase = 'none'; // 'none' | 'climax'
+    this.elapsed = 0;
+    this.duration = 0;
+    this.extended = 0;
+    this.secondsDone = 0;
+    this.afterglowLeft = 0;
+  }
+
+  isClimax() {
+    return this.phase === 'climax';
+  }
+
+  isAfterglow() {
+    return this.afterglowLeft > 0;
+  }
+
+  /** 絶頂中は脱出入力を受け付けない。 */
+  escapeLocked() {
+    return this.phase === 'climax';
+  }
+
+  /** 余韻中は状態異常・フラッシュバックを受けない。 */
+  isStatusImmune() {
+    return this.afterglowLeft > 0;
+  }
+
+  /** 余韻中は拘束攻撃を自動防御する（拘束のハメ防止）。 */
+  blocksBinding() {
+    return this.afterglowLeft > 0;
+  }
+
+  /** 絶頂中・余韻中はHPの自然回復を止める。 */
+  hpRegenScale() {
+    return this.phase === 'climax' || this.afterglowLeft > 0 ? 0 : 1;
+  }
+
+  /** MP/EXPドレインの倍率。絶頂中は専用倍率を使うため1。 */
+  drainScale() {
+    if (this.phase === 'climax') return 1;
+    return this.afterglowLeft > 0 ? B.climax.afterglowDrainRate : 1;
+  }
+
+  /** 拘束中の boundTick 間隔（秒）。 */
+  boundTickSec() {
+    return this.phase === 'climax' ? B.climax.tickSec : B.bound.tickSec;
+  }
+
+  /**
+   * 拘束中かつMP0のときだけ開始する。MPが減った直後に毎回呼ぶ。
+   * 開始時に最大HPの固定割合を失い、HPが足りなければ敗北する。
+   */
+  tryStart({ bound, mp }) {
+    if (this.phase !== 'none') return false;
+    if (!bound || mp > 0) return false;
+    const before = this.getCount();
+    this.duration = climaxDurationSec(before);
+    this.elapsed = 0;
+    this.secondsDone = 0;
+    this.extended = 0;
+    this.phase = 'climax';
+
+    const hpLoss = climaxStartHpLoss(this.getMaxHp());
+    const dead = this.getHp() <= hpLoss;
+    this.emit('climaxStart', { durationSec: this.duration, count: before + 1, hpLoss });
+    this.loseHp(hpLoss);
+    if (dead) {
+      this.abort();
+      this.onDefeat();
+    }
+    return true;
+  }
+
+  /**
+   * 絶頂中に拘束者が増えたときの延長。
+   * 絶頂中でなければ 0 を返して何もしない（finish() 通過後の拘束は通常の新規拘束）。
+   * @returns {number} 実際に延長した秒数
+   */
+  extend(sec = B.climax.extendPerBinderSec) {
+    if (this.phase !== 'climax') return 0;
+    const room = Math.max(0, B.climax.extendMaxPerClimaxSec - this.extended);
+    const add = Math.min(sec, room);
+    if (add <= 0) return 0;
+    this.duration += add;
+    this.extended += add;
+    this.emit('climaxExtend', {
+      addSec: add,
+      durationSec: this.duration,
+      remainingSec: this.duration - this.elapsed,
+    });
+    return add;
+  }
+
+  /** 拘束中のリアルタイム更新。dt は秒。敵の拘束判定（tick）を先に処理してから呼ぶこと。 */
+  update(dt) {
+    if (this.phase !== 'climax') return;
+    this.elapsed = Math.min(this.duration, this.elapsed + dt);
+    const target = Math.floor(this.elapsed + 1e-9);
+    while (this.secondsDone < target) {
+      this.secondsDone += 1;
+      const progress = clamp01(this.secondsDone / this.duration);
+      const binderCount = this.getBinderCount();
+      this.onSecond({
+        second: this.secondsDone,
+        progress,
+        binderCount,
+        drainMult: climaxDrainMult(progress, binderCount),
+        remainingSec: this.duration - this.secondsDone,
+      });
+      if (this.phase !== 'climax') return; // onSecond 内で abort された
+    }
+    // onSecond 内で extend() された場合は duration が伸びているため、ここで再判定される
+    if (this.elapsed >= this.duration) this.finish();
+  }
+
+  finish() {
+    const before = this.getCount();
+    const turns = afterglowTurnsFor(before);
+    this.phase = 'none';
+    this.setCount(before + 1);
+    this.afterglowLeft = turns;
+    this.releaseBinders('climax');
+    this.restoreMp();
+    this.emit('climaxEnd', {
+      count: before + 1,
+      durationSec: this.duration,
+      afterglowTurns: turns,
+    });
+    this.emit('afterglowStart', { turns });
+    this.emit('persist');
+  }
+
+  /** 敗北など、通常終了以外で絶頂を打ち切る。解除・MP回復・余韻は発生しない。 */
+  abort() {
+    this.phase = 'none';
+    this.elapsed = 0;
+    this.secondsDone = 0;
+    this.extended = 0;
+  }
+
+  /** 主人公の行動1回（TURNモード）ごとに呼ぶ。boundTick では呼ばない。 */
+  onHeroTurnEnd() {
+    if (this.afterglowLeft <= 0) return;
+    this.afterglowLeft -= 1;
+    if (this.afterglowLeft > 0) {
+      this.emit('afterglowTurn', { left: this.afterglowLeft });
+    } else {
+      this.emit('afterglowEnd', {});
+    }
+    this.emit('persist');
+  }
+
+  serialize() {
+    return { afterglowTurns: this.afterglowLeft };
+  }
+
+  restore({ afterglowTurns = 0 } = {}) {
+    this.afterglowLeft = Math.max(0, Math.floor(afterglowTurns));
+  }
+
+  /** resetRun() 時。絶頂回数は currentRun 側のリセットに任せる。 */
+  reset() {
+    this.abort();
+    this.afterglowLeft = 0;
+  }
+}
+
+===== src/dungeon/exploration.js: hero action flow, boundTick, endHeroAction =====
+    if (this.combat.stunTurns > 0) {
+      this.combat.stunTurns -= 1;
+      this.buffer = null;
+      this.emit('stunned');
+      return this.doWait();
+    }
+
+    const grace = this.B.explore.diagonalGraceSec;
+    const b = this.buffer;
+    if (b && (b.kind !== 'move' || b.age >= grace)) {
+      this.buffer = null;
+      if (b.kind === 'wait') return this.doWait();
+      if (b.kind === 'guard') return this.doGuard();
+      if (b.kind === 'interact') return this.doInteract();
+      const vec = held.dx || held.dy ? held : b;   // 押したままなら、いまの押下状態を優先
+      return this.doMove(vec.dx, vec.dy, held.shift || b.shift);
+    }
+    if ((held.dx || held.dy) && this.holdSec >= grace) {
+      return this.doMove(held.dx, held.dy, held.shift);
+    }
+    return false;
+  }
+
+  // ---- 主人公の行動 ----
+  doMove(dx, dy, shift) {
+    if (!dx && !dy) return false;
+    const hero = this.hero;
+    hero.setDir(dx, dy);
+    if (shift) return false;   // 向きだけ変える。ターンは進まない
+
+    if (!canStep(this.walk, hero.tx, hero.ty, dx, dy)) return false;   // 壁。ターンは進まない
+    const nx = hero.tx + dx;
+    const ny = hero.ty + dy;
+    const other = this.unitAt(nx, ny);
+
+    if (other && other.kind === 'enemy') {
+      this.beginTurn();
+      this.combat.heroAttack(other);
+      this.endHeroAction(null);
+      return true;
+    }
+
+    this.beginTurn();
+    let swapped = null;
+    if (other && other.kind === 'ally') {
+      swapped = other;
+      other.moveTo(hero.tx, hero.ty);   // 位置を入れ替える
+    }
+    hero.moveTo(nx, ny);
+    this.endHeroAction(swapped);
+    return true;
+  }
+
+  doWait() {
+    this.beginTurn();
+    this.endHeroAction(null);
+    return true;
+  }
+
+  doGuard() {
+    this.beginTurn();
+    this.combat.heroGuard();
+    this.endHeroAction(null);
+    return true;
+  }
+
+  doInteract() {
+    if (this.onStairs) this.descend();
+    else this.emit('nothing');
+    return true;
+  }
+
+  boundTick() {
+    if (!this.combat.bound) return;
+    for (const u of this.units) u.beginTurn();
+    this.combat.beginTurn();
+    this.alliesAct(null);
+    this.enemiesAct(true);
+    this.combat.endTurn();
+    this.combat.boundTurnElapsed();
+    this.emit('turn', this.turnCount);
+  }
+
+  beginTurn() {
+    for (const u of this.units) u.beginTurn();
+    this.combat.beginTurn();
+  }
+
+  // 主人公の行動のあと、仲間 → 敵の順に動く
+  endHeroAction(swappedAlly) {
+    this.turnCount += 1;
+    this.refresh();
+    this.alliesAct(swappedAlly);
+    this.enemiesAct();
+    this.combat.endTurn();
+
+    this.busyTotal = this.combat.actedThisTurn ? this.B.explore.combatSec : this.B.explore.moveSec;
+    this.busySec = this.busyTotal;
+    this.emit('turn', this.turnCount);
+
+    if (this.combat.defeated) this.handleDefeat();
+
+===== src/dungeon/exploration.js: enemy loop including tryUnite =====
+
+  enemiesAct(boundPhase = false) {
+    const D = this.B.dungeon;
+    const w = this.map.w;
+    for (const e of [...this.units]) {
+      if (e.kind !== 'enemy') continue;
+      if (this.combat.bound && !boundPhase) break;
+      if (this.combat.bound?.binders.some((b) => b.unit === e)) continue;
+      if (this.combat.defeated) break;   // 主人公が倒れたら、残りの敵は動かない
+
+      const dist = this.enemyDist(e);
+      const seen = this.map.isVisible(e.tx, e.ty);
+      const pathDist = this.heroDist[e.ty * w + e.tx];
+      const aware = seen && pathDist >= 0 && pathDist <= D.aggroRange;
+
+      if (boundPhase && this.combat.bound) {
+        if (dist <= 1) {
+          this.combat.tryUnite(e);
+        } else if (aware) {
+          this.stepToward(e);
+        } else if (Math.random() < D.wanderChance) {
+          const d = DIRS8[Math.floor(Math.random() * DIRS8.length)];
+          const nx = e.tx + d.dx;
+          const ny = e.ty + d.dy;
+          if (canStep(this.walk, e.tx, e.ty, d.dx, d.dy) && !this.unitAt(nx, ny)) e.moveTo(nx, ny);
+        }
+        continue;
+      }
+
+      if (aware || dist <= 1) {
+        if (this.combat.enemyDecide(e, { dist, sees: seen }) === 'move') this.stepToward(e);
+        continue;
+      }
+      if (Math.random() < D.wanderChance) {
+        const d = DIRS8[Math.floor(Math.random() * DIRS8.length)];
+        const nx = e.tx + d.dx;
+        const ny = e.ty + d.dy;
+        if (canStep(this.walk, e.tx, e.ty, d.dx, d.dy) && !this.unitAt(nx, ny)) e.moveTo(nx, ny);
+      }
+    }
+  }
+
+===== src/core/audio.js: playSE =====
+  // opts: { pan: -1〜1, gain: 0〜, behind: 背後ならこもらせる, ally: 仲間なら音量を下げる, vertical: 前後定位, params: 合成音用 }
+  // 戻り値: 鳴らせたら true（ロック解除前は false）
+  playSE(id, { pan = 0, gain = 1, behind = false, ally = false, vertical = 0, params = {} } = {}) {
+    const def = SE_TABLE[id];
+    if (!def) {
+      console.warn(`未定義のSEです: ${id}`);
+      return false;
+    }
+    if (!this.ctx || this.ctx.state !== 'running') return false;
+
+    const { ctx, B } = this;
+    const now = ctx.currentTime;
+    const jitter = 1 + (Math.random() * 2 - 1) * B.audio.pitchJitter;
+    const rate = jitter * (1 + clamp(vertical, -1, 1) * (B.spatial.verticalPitch ?? 0.04));
+    const level = (def.gain ?? 1) * gain * (ally ? B.audio.allyGain : 1);
+
+    // 同時発音の上限。超えたら、いちばん古い音を止める
+    while (this.voices.length >= B.audio.maxVoices) {
+      this.stopVoice(this.voices.shift());
+    }
+
+    const voiceGain = ctx.createGain();
+    voiceGain.gain.value = level;
+    let node = voiceGain;
+    const extra = [];
+    if (this.spatial && behind) {
+      const lowpass = ctx.createBiquadFilter();
+      lowpass.type = 'lowpass';
+      lowpass.frequency.value = B.spatial.behindLowpassHz;
+      node.connect(lowpass);
+      node = lowpass;
+      extra.push(lowpass);
+    }
+    if (this.spatial && ctx.createStereoPanner) {
+      const panner = ctx.createStereoPanner();
+      panner.pan.value = clamp(pan, -1, 1);
+      node.connect(panner);
+      node = panner;
+      extra.push(panner);
+    }
+    node.connect(this.seBus);
+
+    const voice = { voiceGain, extra, sources: [] };
+    let durationSec = 0;
+    const buffer = this.buffers.get(id);
+    if (buffer) {
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.playbackRate.value = rate;
+      src.connect(voiceGain);
+      src.start(now);
+      voice.sources.push(src);
+      durationSec = buffer.duration / rate;
+    } else {
+      const synth = SYNTH[def.synth];
+      if (!synth) {
+        console.warn(`合成音が未定義です: ${def.synth}`);
+        return false;
+      }
+      const rig = {
+        ctx,
+        out: voiceGain,
+        t0: now,
+        rate,
+        noiseBuffer: this.noiseBuffer,
+        sources: voice.sources,
+        end: 0,
+        params
+      };
+      synth(rig);
+      durationSec = rig.end;
+    }
+
+===== src/battle/buffs.js (complete file) =====
+import { B } from '../data/balance.js';
+
+export const BUFFS = {
+  atkUp: { label: '攻撃強化', desc: 'ダメージ+30%', mult: { damage: 1.3 } },
+  drainGuard: { label: '吸精軽減', desc: 'ドレイン-30%', mult: { drainTaken: 0.7 } },
+  escapeAid: { label: '脱出補助', desc: '脱出必要数-30%', mult: { escapeNeed: 0.7 } },
+};
+
+export const BUFF_IDS = Object.keys(BUFFS);
+
+export class BuffManager {
+  constructor() {
+    this.items = [];
+  }
+
+  /** 重ねがけは持続ターンの更新。 */
+  add(id) {
+    if (!BUFFS[id]) return null;
+    const turns = B.buffs.durationTurns;
+    const cur = this.items.find((b) => b.id === id);
+    if (cur) {
+      cur.turnsLeft = turns;
+      return { id, refreshed: true };
+    }
+    this.items.push({ id, turnsLeft: turns });
+    return { id, refreshed: false };
+  }
+
+  /** 1ターン経過。失効したバフのIDを返す。 */
+  tick() {
+    const expired = [];
+    for (const b of this.items) b.turnsLeft -= 1;
+    this.items = this.items.filter((b) => {
+      if (b.turnsLeft > 0) return true;
+      expired.push(b.id);
+      return false;
+    });
+    return expired;
+  }
+
+  /** 指定ステータスの倍率（複数バフは積）。 */
+  mult(stat) {
+    let m = 1;
+    for (const b of this.items) m *= BUFFS[b.id].mult[stat] ?? 1;
+    return m;
+  }
+
+  entries() {
+    return this.items.map((b) => ({
+      id: b.id,
+      label: BUFFS[b.id].label,
+      desc: BUFFS[b.id].desc,
+      turnsLeft: b.turnsLeft,
+    }));
+  }
+
+  serialize() {
+    return this.items.map((b) => ({ ...b }));
+  }
+
+  restore(list = []) {
+    this.items = list
+      .filter((b) => BUFFS[b.id] && b.turnsLeft > 0)
+      .map((b) => ({ id: b.id, turnsLeft: Math.floor(b.turnsLeft) }));
+  }
+
+  clear() {
+    this.items = [];
+  }
+}
+
+===== src/data/logMessages.js (complete file) =====
+// File: src/data/logMessages.js
+// ログの種類と文言。種類を増やすときはここへ足す。{名前} は params で置き換える。
+export const LOG_KINDS = {
+  enemyLevelUp: {
+    mark: '▲', color: 'gold', importance: 'major', se: 'enemyGrow',
+    text: '{name}のレベルが1上がった！（Lv{level}）'
+  },
+  raceAbilityGrow: {
+    mark: '▲', color: 'gold', importance: 'major', se: 'enemyGrow',
+    text: '{name}の「{ability}」がLv{level}に成長した…'
+  },
+  skillLearn: {
+    mark: '★', color: 'pink', importance: 'major', se: 'learn',
+    text: '{name}は{source}の能力を吸収して「{skill}」を覚えた！'
+  },
+  loseHabitUp: {
+    mark: '▼', color: 'purple', importance: 'major', se: 'debuffDown',
+    text: '負け癖が悪化した…（{name}：{stage}段）'
+  },
+  fallHabitUp: {
+    mark: '▼', color: 'purple', importance: 'major', se: 'debuffDown',
+    text: '堕ち癖が深まった…（{stage}段）'
+  },
+  allyTargetUp: {
+    mark: '▼', color: 'purple', importance: 'major', se: 'debuffDown',
+    text: '{ally}は「カモ」として学習されていく…'
+  },
+  resistDown: {
+    mark: '▼', color: 'purple', importance: 'minor', se: 'debuffDown',
+    text: '{attr}の耐性が下がった（{from} → {to}）'
+  },
+  levelDown: {
+    mark: '▼', color: 'purple', importance: 'minor', se: 'debuffDown',
+    text: 'レベルが{level}に下がった…'
+  },
+  erosionUp: {
+    mark: '▼', color: 'purple', importance: 'major', se: null,
+    text: '浸食ゲージが上がった（+{gain} → {value}）'
+  },
+  drainPulse: {
+    mark: '◇', color: 'cyan', importance: 'minor', se: null,   // SEは属性別に drainPulse.js が鳴らす
+    text: '{victim} MP -{amount} ← {dir}の{name}（{attr}）'
+  },
+  uniteJoin: {
+    mark: '■', color: 'orange', importance: 'minor', se: null,
+    text: '{name}が拘束に加わった！'
+  },
+  allyRun: {
+    mark: '■', color: 'yellow', importance: 'minor', se: null,
+    text: '{ally}は怯えて逃げ出した！'
+  },
+  allyCaptured: {
+    mark: '■', color: 'red', importance: 'major', se: null,
+    text: '{ally}が捕らわれた…'
+  },
+
+  // ---- v6.6 敵の学習 ----
+  markTierUp: {
+    mark: '▲', color: 'gold', importance: 'major', se: 'enemyGrow',
+    text: '{name}はあなたの手の内を知り始めた…（{tierName}）'
+  },
+  rememberSkill: {
+    mark: '▲', color: 'gold', importance: 'major', se: 'enemyGrow',
+    text: '{name}は「{skill}」で勝った記憶を刻んだ…'
+  },
+  rememberUse: {
+    mark: '★', color: 'pink', importance: 'minor', se: null,
+    text: '{name}は「{skill}」を覚えている！'
+  },
+  enemySpotted: {
+    mark: '◇', color: 'orange', importance: 'minor', se: null,
+    text: '{name}（Lv{level}）を見つけた'
+  },
+  enemyWindup: {
+    mark: '!', color: 'orange', importance: 'minor', se: null,
+    text: '{name}は「{skill}」の構えを取った！'
+  },
+  enemySkillLearn: {
+    mark: '★', color: 'gold', importance: 'major', se: 'learn',
+    text: '{name}は吸収を重ね、「{skill}」を覚えた！'
+  },
+  heroDamaged: {
+    mark: '■', color: 'red', importance: 'minor', se: null,
+    text: '{name}の{skill}！ HP -{amount}'
+  },
+  heroDrained: {
+    mark: '◇', color: 'cyan', importance: 'minor', se: null,
+    text: '{name}の{skill}！ MP -{amount}'
+  },
+  enemyDown: {
+    mark: '◇', color: 'white', importance: 'minor', se: null,
+    text: '{name}を倒した！ EXP +{exp}'
+  },
+  heroLevelUp: {
+    mark: '▲', color: 'gold', importance: 'major', se: 'learn',
+    text: '主人公のレベルが上がった！（Lv{level}）'
+  },
+  weaponSwitch: {
+    mark: '◇', color: 'white', importance: 'minor', se: 'tick',
+    text: '{weapon}に持ちかえた'
+  },
+  touchPenalty: {
+    mark: '▼', color: 'purple', importance: 'minor', se: 'debuffDown',
+    text: '{name}に触れてしまった…（{effect}）'
+  },
+  touchHabitUp: {
+    mark: '▼', color: 'purple', importance: 'major', se: 'debuffDown',
+    text: '感触の記憶が深まった…（{stage}段）'
+  },
+  stunned: {
+    mark: '■', color: 'yellow', importance: 'minor', se: null,
+    text: '体がしびれて動けない…'
+  },
+  allyHeal: {
+    mark: '◇', color: 'cyan', importance: 'minor', se: 'learn',
+    text: '{ally}の回復！ HP +{amount}'
+  },
+  mpEmpty: {
+    mark: '■', color: 'red', importance: 'minor', se: null,
+    text: 'MPが尽きかけている…'
+  },
+  heroDefeated: {
+    mark: '■', color: 'red', importance: 'major', se: 'debuffDown',
+    text: '主人公は倒れた…（{name}の{skill}）'
+  }
+};
+
+// 敵のセリフ（仮。8.4 に従い、作者と相談して差し替える）
+export const TAUNT_LINES = {
+  markFamiliar: ['また来たの？ 慣れてきちゃったわね♡', 'あなたの動き、だいたい分かってきたわ'],
+  markKnowing: ['もう全部お見通しよ♡', '次はどうやって負けたいの？'],
+  rememberUse: ['この前みたいに、してあげる♡', 'あれ、気に入ったでしょ？']
+};
+
+export function formatLog(kind, params = {}) {
+  const def = LOG_KINDS[kind];
+  if (!def) throw new Error(`未定義のログ種別です: ${kind}`);
+  return def.text.replace(/\{(\w+)\}/g, (_, key) => String(params[key] ?? '？'));
+}
+
+===== src/data/saveSchema.js: currentRun =====
+  currentRun: {
+    seed: 0, dungeon: 1, floor: 1, floorState: {}, gold: 0,
+    erosion: 0,
+    defeatHistory: [],
+    hero: { hp: 100, maxHp: 100, mp: 300, maxMp: 300, level: 1, exp: 0, regretStacks: 0, weapon: 'sword' },
+    allies: {
+      mage: { status: 'ACTIVE', hp: 120, mp: 150, charmGauge: 0 },
+      priest: { status: 'ACTIVE', hp: 120, mp: 150, charmGauge: 0 }
+    },
+    inventory: [],
+    pendingRescue: [],
+    pendingAmbush: null
+  }
+};
+

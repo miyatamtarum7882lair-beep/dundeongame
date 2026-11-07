@@ -33,15 +33,13 @@ export function drawEnemyLabels(g, view, persistent, B) {
     g.fillRect(bx - 1, by - 1, bw + 2, 7);
     g.fillStyle = '#ff6b8a';
     g.fillRect(bx, by, bw * clamp01(u.hp / u.maxHp), 5);
-    if (u.advancedSkill) {
-      const progress = u.advancedSkillUnlocked
-        ? 1
-        : clamp01(u.drainExp / B.enemy.specialUnlockDrain);
-      g.fillStyle = 'rgba(0, 0, 0, 0.75)';
-      g.fillRect(bx, by + 7, bw, 2);
-      g.fillStyle = u.advancedSkillUnlocked ? '#ffd36b' : '#7ee7d6';
-      g.fillRect(bx, by + 7, bw * progress, 2);
-    }
+    const xpProgress = u.advancedSkill && !u.advancedSkillUnlocked
+      ? clamp01(u.drainExp / B.enemy.specialUnlockDrain)
+      : clamp01(u.exp / B.enemy.specialUnlockDrain);
+    g.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    g.fillRect(bx, by + 7, bw, 4);
+    g.fillStyle = u.advancedSkill && !u.advancedSkillUnlocked ? '#7ee7d6' : '#ffd36b';
+    g.fillRect(bx, by + 7, bw * xpProgress, 4);
 
     // 名前とレベル
     const nameText = `${style.icon}${u.name}`;

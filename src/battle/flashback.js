@@ -22,7 +22,7 @@ export class FlashbackController {
     this.time = 0;
     this.activeUntil = -Infinity;
     this.lastFiredAt = -Infinity;
-    this.erectUntil = -Infinity;
+    this.erectTurns = 0;
     this.once = new Set();
     this.wasActive = false;
     this.wasErect = false;
@@ -33,16 +33,23 @@ export class FlashbackController {
   }
 
   isErect() {
-    return this.time < this.erectUntil;
+    return this.erectTurns > 0;
   }
 
-  erectLeftSec() {
-    return Math.max(0, this.erectUntil - this.time);
+  erectTurnsLeft() {
+    return this.erectTurns;
   }
 
-  /** 勃起状態中の、行動確定後の入力ロック秒数。 */
-  actionDelaySec() {
-    return this.isErect() ? B.flashback.erectActionDelaySec : 0;
+  /** 1回の主人公行動ごとに残りターンを減らす。 */
+  onHeroTurn() {
+    if (this.erectTurns <= 0) return;
+    this.erectTurns -= 1;
+    if (this.erectTurns === 0) {
+      this.wasErect = false;
+      this.emit('statusChanged', {});
+    } else {
+      this.emit('statusChanged', {});
+    }
   }
 
   /** @param {{kind: string, enemyId: string, attr?: string, skillId?: string|null, tx?: number, ty?: number}} req */
@@ -65,7 +72,7 @@ export class FlashbackController {
     this.activeUntil = this.time + c.durSec;
     this.wasActive = true;
     if (erect) {
-      this.erectUntil = this.time + c.erectSec;
+      this.erectTurns = c.erectTurns;
       this.wasErect = true;
     }
     this.emit('flashbackStart', { ...req, mode, durSec: c.durSec, erect });
@@ -78,10 +85,6 @@ export class FlashbackController {
     if (this.wasActive && !this.isActive()) {
       this.wasActive = false;
       this.emit('flashbackEnd', {});
-    }
-    if (this.wasErect && !this.isErect()) {
-      this.wasErect = false;
-      this.emit('statusChanged', {});
     }
   }
 
@@ -97,7 +100,7 @@ export class FlashbackController {
   resetFloor() {
     this.once.clear();
     this.cancel();
-    this.erectUntil = -Infinity;
+    this.erectTurns = 0;
     this.wasErect = false;
   }
 }

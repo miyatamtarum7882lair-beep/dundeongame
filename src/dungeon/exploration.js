@@ -314,6 +314,7 @@ export class Exploration extends Emitter {
 
   beginTurn() {
     for (const u of this.units) u.beginTurn();
+    this.combat.heroTurnStart();
     this.combat.beginTurn();
   }
 
@@ -335,23 +336,65 @@ export class Exploration extends Emitter {
   // 歩数地図を使って、主人公へ1歩近づく。動けたら true
   stepToward(unit) {
     const w = this.map.w;
-    let bestDist = this.heroDist[unit.ty * w + unit.tx];
-    if (bestDist <= 0) return false;
+    const walkable = (x, y) => {
+      if (!this.walk(x, y)) return false;
+      const other = this.unitAt(x, y);
+      return !other || other === unit || other === this.hero;
+    };
+    const dist = bfsDistances(w, this.map.h, walkable, this.hero.tx, this.hero.ty);
+    const currentDist = dist[unit.ty * w + unit.tx];
+    if (currentDist <= 0) return false;
     let best = null;
+    let bestDist = currentDist;
     for (const d of DIRS8) {
       const nx = unit.tx + d.dx;
       const ny = unit.ty + d.dy;
       if (!this.map.inBounds(nx, ny)) continue;
-      const nd = this.heroDist[ny * w + nx];
+      const nd = dist[ny * w + nx];
       if (nd < 0 || nd >= bestDist) continue;
-      if (!canStep(this.walk, unit.tx, unit.ty, d.dx, d.dy)) continue;
-      if (this.unitAt(nx, ny)) continue;
+      if (!canStep(walkable, unit.tx, unit.ty, d.dx, d.dy)) continue;
       best = { x: nx, y: ny };
       bestDist = nd;
     }
     if (!best) return false;
     unit.moveTo(best.x, best.y);
     return true;
+  }
+
+  // 拘束を仕掛けられる前後左右のマスへ、壁と他ユニットを避けて近づく。
+  stepTowardBindPosition(unit) {
+    const hero = this.hero;
+    const w = this.map.w;
+    const h = this.map.h;
+    const occupied = (x, y) => {
+      const other = this.unitAt(x, y);
+      return other && other !== unit;
+    };
+    const walkable = (x, y) => this.walk(x, y) && !occupied(x, y);
+    let best = null;
+
+    for (const d of [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }]) {
+      const tx = hero.tx + d.dx;
+      const ty = hero.ty + d.dy;
+      if (!this.map.inBounds(tx, ty) || !this.walk(tx, ty) || occupied(tx, ty)) continue;
+
+      const dist = bfsDistances(w, h, walkable, tx, ty);
+      const currentDist = dist[unit.ty * w + unit.tx];
+      if (currentDist <= 0) continue;
+      if (!best || currentDist < best.distance) best = { dist, distance: currentDist };
+    }
+    if (!best) return false;
+
+    for (const d of DIRS8) {
+      const nx = unit.tx + d.dx;
+      const ny = unit.ty + d.dy;
+      if (!this.map.inBounds(nx, ny) || occupied(nx, ny)) continue;
+      if (!canStep(walkable, unit.tx, unit.ty, d.dx, d.dy)) continue;
+      if (best.dist[ny * w + nx] !== best.distance - 1) continue;
+      unit.moveTo(nx, ny);
+      return true;
+    }
+    return false;
   }
 
   alliesAct(skip) {
@@ -365,12 +408,14 @@ export class Exploration extends Emitter {
     }
   }
 
-  // 敵から主人公までの距離。斜めの隣接は、壁の角を挟むと「届かない」ので 2 とする
+  // 拘束と近接攻撃は前後左右の隣接だけを届く距離とする。
   enemyDist(e) {
     const hero = this.hero;
-    const d = chebyshev(e.tx, e.ty, hero.tx, hero.ty);
-    if (d === 1 && !canStep(this.walk, e.tx, e.ty, hero.tx - e.tx, hero.ty - e.ty)) return 2;
-    return d;
+    const dx = Math.abs(e.tx - hero.tx);
+    const dy = Math.abs(e.ty - hero.ty);
+    if (dx === 1 && dy === 1) return 1;
+    if (dx + dy === 1) return canStep(this.walk, e.tx, e.ty, hero.tx - e.tx, hero.ty - e.ty) ? 1 : 2;
+    return Math.max(dx, dy);
   }
 
   enemiesAct(boundPhase = false) {
@@ -388,10 +433,14 @@ export class Exploration extends Emitter {
       const aware = seen && pathDist >= 0 && pathDist <= D.aggroRange;
 
       if (boundPhase && this.combat.bound) {
-        if (dist <= 1) {
+        const diagonal = Math.abs(e.tx - this.hero.tx) === 1 && Math.abs(e.ty - this.hero.ty) === 1;
+        if (diagonal && this.stepTowardBindPosition(e)) {
+          this.combat.tryUnite(e);
+        } else if (dist <= 1) {
           this.combat.tryUnite(e);
         } else if (aware) {
-          this.stepToward(e);
+          if (chebyshev(e.tx, e.ty, this.hero.tx, this.hero.ty) === 1) this.stepTowardBindPosition(e);
+          else this.stepToward(e);
         } else if (Math.random() < D.wanderChance) {
           const d = DIRS8[Math.floor(Math.random() * DIRS8.length)];
           const nx = e.tx + d.dx;
@@ -402,7 +451,15 @@ export class Exploration extends Emitter {
       }
 
       if (aware || dist <= 1) {
-        if (this.combat.enemyDecide(e, { dist, sees: seen }) === 'move') this.stepToward(e);
+        const diagonal = Math.abs(e.tx - this.hero.tx) === 1 && Math.abs(e.ty - this.hero.ty) === 1;
+        if (diagonal && this.stepTowardBindPosition(e)) {
+          // Reposition and resolve the chosen attack as one enemy action.
+          this.combat.enemyDecide(e, { dist: 1, sees: seen, bindImmediately: true });
+          continue;
+        }
+        if (this.combat.enemyDecide(e, { dist, sees: seen, bindImmediately: diagonal }) === 'move') {
+          this.stepToward(e);
+        }
         continue;
       }
       if (Math.random() < D.wanderChance) {

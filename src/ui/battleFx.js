@@ -243,14 +243,8 @@ export class BattleFx {
       }
       case 'kiss':
         if (this.getSettings().kissMarks !== false) {
-          const point = Number.isFinite(e.x) && Number.isFinite(e.y)
-            ? this.toScreen(e.x, e.y)
-            : null;
           this.kissMarks.stamp({
-            target: 'screen',
-            dir: { dx: e.dx, dy: e.dy },
-            x: point?.x,
-            y: point?.y
+            target: 'screen'
           });
         }
         break;

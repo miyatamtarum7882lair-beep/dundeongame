@@ -1,5 +1,5 @@
 // File: src/ui/portraitLoader.js
-import { getImage, putImage, deleteImage } from '../core/imageStore.js';
+import { getImage, putImage, deleteImage, requestPersistentImageStorage } from '../core/imageStore.js';
 
 const ACCEPT = ['image/png', 'image/jpeg', 'image/webp'];
 const EXT_PATTERN = /\.(png|jpe?g|webp)$/i;
@@ -18,17 +18,27 @@ export function loadImage(url) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
+    img.onerror = (event) => {
+      console.error(`[portrait] Image request failed: ${url}`, event);
+      resolve(null);
+    };
     img.src = url;
   });
 }
 
 // 拡張子を順に試して、最初に見つかった画像を返す（例: assets/portraits/kitten.jpg）
 async function loadFirstImage(basePath) {
+  const tried = [];
   for (const ext of cfg.exts) {
-    const img = await loadImage(`${basePath}.${ext}`);
+    const relative = `${basePath}.${ext}`;
+    // Resolve assets from the deployment root, including when hosted under a subpath.
+    // Route-relative fallbacks can hit an SPA index.html response instead of the image.
+    const url = new URL(`${import.meta.env.BASE_URL}${relative}`, document.baseURI).href;
+    tried.push(url);
+    const img = await loadImage(url);
     if (img) return img;
   }
+  console.error(`[portrait] No asset loaded for ${basePath}; tried:`, tried, 'document.baseURI:', document.baseURI);
   return null;
 }
 
@@ -45,7 +55,8 @@ async function prepare(file) {
   const longSide = Math.max(bmp.width, bmp.height);
   if (longSide <= cfg.maxSide) {
     bmp.close();
-    return file;
+    // Store a plain Blob, not a File carrying a device-specific file handle/name.
+    return file.slice(0, file.size, file.type || 'application/octet-stream');
   }
 
   const s = cfg.maxSide / longSide;
@@ -67,15 +78,25 @@ async function prepare(file) {
 
 // 今の階に出る敵や、設定部屋で選んだキャラについて呼ぶ
 export async function preloadPortrait(id) {
-  if (cache.has(id)) return;
+  // A failed asset load is transient (for example during dev-server startup).
+  // Do not let a cached null permanently prevent a later retry.
+  if (cache.has(id)) {
+    if (cache.get(id)?.image) return;
+    cache.delete(id);
+  }
   const generation = generations.get(id) ?? 0;
   const active = pending.get(id);
   if (active?.generation === generation) return active.promise;
   const task = (async () => {
     let result;
     try {
-      const blob = await getImage(id);
-      if (blob) result = { image: await createImageBitmap(blob), source: 'user' };
+      const stored = await getImage(id);
+      if (stored) {
+        // Normalize older File records to portable Blob records while migrating them.
+        const blob = stored.slice(0, stored.size, stored.type || 'application/octet-stream');
+        if (stored.constructor?.name === 'File') await putImage(id, blob);
+        result = { image: await createImageBitmap(blob), source: 'user' };
+      }
     } catch (error) {
       console.warn('差し替え画像の読み込みに失敗したため、標準の絵を使います', error);
     }
@@ -83,7 +104,7 @@ export async function preloadPortrait(id) {
       const image = await loadFirstImage(`assets/portraits/${id}`);
       result = image ? { image, source: 'asset' } : { image: null, source: 'none' };
     }
-    if (generations.get(id) === generation) cache.set(id, result);
+    if ((generations.get(id) ?? 0) === generation && result.image) cache.set(id, result);
     else result.image?.close?.();
   })();
   pending.set(id, { generation, promise: task });
@@ -118,8 +139,12 @@ export async function importPortrait(id, file) {
   try {
     const blob = await prepare(file);
     await putImage(id, blob);
+    const stored = await getImage(id);
+    if (!stored || stored.size !== blob.size) throw new Error('画像をブラウザー保存領域から確認できませんでした');
+    // Request persistent quota after the image is safely written and read back.
+    void requestPersistentImageStorage();
     cache.get(id)?.image?.close?.();
-    cache.set(id, { image: await createImageBitmap(blob), source: 'user' });
+    cache.set(id, { image: await createImageBitmap(stored), source: 'user' });
     return { ok: true };
   } catch (error) {
     console.warn('画像の取り込みに失敗しました', error);

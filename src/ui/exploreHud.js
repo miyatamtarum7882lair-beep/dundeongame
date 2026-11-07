@@ -3,7 +3,6 @@
 import { clamp01 } from '../core/util.js';
 import { expNeeded } from '../battle/damage.js';
 
-const WEAPON_NAMES = { sword: '剣', fist: '拳' };
 
 function text(g, str, x, y) {
   g.strokeText(str, x, y);
@@ -15,6 +14,99 @@ function bar(g, x, y, w, h, ratio, color) {
   g.fillRect(x, y, w, h);
   g.fillStyle = color;
   g.fillRect(x, y, w * clamp01(ratio), h);
+}
+
+function drawLevelGauge(g, hero, B) {
+  const cx = 326;
+  const cy = 61;
+  const radius = 34;
+  const need = expNeeded(hero.level, B);
+  const ratio = clamp01(hero.exp / need);
+
+  g.save();
+  g.lineWidth = 12;
+  g.lineCap = 'round';
+  g.strokeStyle = 'rgba(0, 0, 0, 0.72)';
+  g.beginPath();
+  g.arc(cx, cy, radius, 0, Math.PI * 2);
+  g.stroke();
+  if (ratio > 0) {
+    const gradient = g.createLinearGradient(cx - radius, cy - radius, cx + radius, cy + radius);
+    gradient.addColorStop(0, '#ffe27a');
+    gradient.addColorStop(1, '#ff9d45');
+    g.strokeStyle = gradient;
+    g.beginPath();
+    g.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
+    g.stroke();
+  }
+
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = `bold 21px ${B.ui.fontFamily}`;
+  g.fillStyle = '#fff5d4';
+  g.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+  g.lineWidth = 4;
+  g.strokeText(`Lv${hero.level}`, cx, cy);
+  g.fillText(`Lv${hero.level}`, cx, cy);
+  g.font = `bold 12px ${B.ui.fontFamily}`;
+  g.lineWidth = 3;
+  g.strokeText(`${hero.exp} / ${need} EXP`, cx, cy + 49);
+  g.fillStyle = '#fff';
+  g.fillText(`${hero.exp} / ${need} EXP`, cx, cy + 49);
+  g.restore();
+}
+
+function drawWeaponIcon(g, weapon) {
+  const x = 232;
+  const y = 42;
+  g.save();
+  g.fillStyle = 'rgba(24, 18, 28, 0.88)';
+  g.strokeStyle = 'rgba(255, 224, 166, 0.9)';
+  g.lineWidth = 2;
+  g.beginPath();
+  g.roundRect(x, y, 34, 34, 8);
+  g.fill();
+  g.stroke();
+  if (weapon === 'fist') {
+    g.fillStyle = '#ffd7aa';
+    g.strokeStyle = '#fff1dc';
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.roundRect(x + 10, y + 17, 16, 11, 4);
+    g.fill();
+    g.stroke();
+    for (let i = 0; i < 4; i += 1) {
+      g.beginPath();
+      g.roundRect(x + 9 + i * 4.2, y + 9 + (i === 0 || i === 3 ? 2 : 0), 5, 12, 2.5);
+      g.fill();
+      g.stroke();
+    }
+    g.beginPath();
+    g.roundRect(x + 5, y + 17, 8, 6, 3);
+    g.fill();
+    g.stroke();
+  } else {
+    g.fillStyle = '#fff0b2';
+    g.strokeStyle = '#fff8dd';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(x + 17, y + 4);
+    g.lineTo(x + 22, y + 19);
+    g.lineTo(x + 17, y + 24);
+    g.lineTo(x + 12, y + 19);
+    g.closePath();
+    g.fill();
+    g.stroke();
+    g.strokeStyle = '#d79c53';
+    g.lineWidth = 3;
+    g.beginPath();
+    g.moveTo(x + 9, y + 19);
+    g.lineTo(x + 25, y + 19);
+    g.moveTo(x + 17, y + 23);
+    g.lineTo(x + 17, y + 29);
+    g.stroke();
+  }
+  g.restore();
 }
 
 // 高解像度層（gHires）に描く
@@ -40,12 +132,12 @@ export function drawExploreHud(g, exp, B) {
   bar(g, 16, 60, 200, 10, hero.mp / hero.maxMp, '#6bb8ff');
   g.font = `12px ${B.ui.fontFamily}`;
   g.fillStyle = '#ffffff';
-  text(g, `HP ${hero.hp}/${hero.maxHp}`, 224, 42);
-  text(g, `MP ${hero.mp}/${hero.maxMp}`, 224, 58);
+  text(g, 'HP ' + hero.hp + '/' + hero.maxHp, 22, 42);
+  text(g, 'MP ' + hero.mp + '/' + hero.maxMp, 22, 58);
 
   g.fillStyle = '#ffd36b';
-  const weapon = WEAPON_NAMES[hero.weapon] ?? '剣';
-  text(g, `Lv${hero.level}　EXP ${hero.exp}/${expNeeded(hero.level, B)}　武器：${weapon}（Q）　防御：G`, 16, 78);
+  drawWeaponIcon(g, hero.weapon);
+  drawLevelGauge(g, hero, B);
 
   // 階の表示。ふわっと出て、ゆっくり消える（点滅しない）
   if (exp.bannerSec > 0) {

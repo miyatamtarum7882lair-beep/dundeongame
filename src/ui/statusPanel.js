@@ -15,9 +15,9 @@ const KIND_COLOR = {
 };
 
 /**
- * @param {{buffs?: Array<{id:string,label:string,desc:string,turnsLeft:number}>, afterglowTurns?: number, erectLeftSec?: number}} src
+ * @param {{buffs?: Array<{id:string,label:string,desc:string,turnsLeft:number}>, afterglowTurns?: number, erectTurns?: number}} src
  */
-export function buildStatusEntries({ buffs = [], afterglowTurns = 0, erectLeftSec = 0 } = {}) {
+export function buildStatusEntries({ buffs = [], afterglowTurns = 0, erectTurns = 0 } = {}) {
   const out = [];
   if (afterglowTurns > 0) {
     out.push({
@@ -28,13 +28,13 @@ export function buildStatusEntries({ buffs = [], afterglowTurns = 0, erectLeftSe
       remain: `残り${afterglowTurns}T`,
     });
   }
-  if (erectLeftSec > 0) {
+  if (erectTurns > 0) {
     out.push({
       id: 'erect',
       kind: 'debuff',
       label: '勃起状態',
       desc: '行動が遅くなる',
-      remain: `${erectLeftSec.toFixed(1)}s`,
+      remain: `残り${erectTurns}T`,
     });
   }
   for (const b of buffs) {

@@ -70,18 +70,32 @@ export class KissMarkLayer {
     this.marks = [];
   }
 
-  stamp({ target = 'screen', dir = { dx: 0, dy: 0 }, x, y } = {}) {
+  stamp({ target = 'screen', x, y } = {}) {
     if (this.getSettings().flashback === 'reduced' || this.getSettings().kissMarks === false) return;
     const area = this.areas.get(target);
     if (!area) return;
-    const side = Math.sign(dir.dx || (Math.random() < 0.5 ? -1 : 1));
-    const markX = Number.isFinite(x)
-      ? x + (Math.random() - 0.5) * 16
-      : area.x + area.w / 2 + side * this.cfg.minDistance * (0.5 + Math.random() * this.cfg.sideBias);
-    const markY = Number.isFinite(y)
-      ? y + (Math.random() - 0.5) * 16
-      : area.y + area.h * (0.43 + (Math.random() - 0.5) * 0.18);
-    if (!Number.isFinite(x) && this.marks.some((mark) => Math.hypot(mark.x - markX, mark.y - markY) < this.cfg.minDistance)) return;
+    const randomPoint = () => {
+      const marginX = Math.min(this.cfg.sizePx * 0.45, area.w * 0.2);
+      const marginY = Math.min(this.cfg.sizePx * 0.45, area.h * 0.2);
+      return {
+        x: area.x + marginX + Math.random() * Math.max(0, area.w - marginX * 2),
+        y: area.y + marginY + Math.random() * Math.max(0, area.h - marginY * 2)
+      };
+    };
+    let markX;
+    let markY;
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      markX = x + (Math.random() - 0.5) * 16;
+      markY = y + (Math.random() - 0.5) * 16;
+    } else {
+      let point = randomPoint();
+      for (let attempt = 0; attempt < 12; attempt++) {
+        point = randomPoint();
+        if (!this.marks.some((mark) => Math.hypot(mark.x - point.x, mark.y - point.y) < this.cfg.minDistance)) break;
+      }
+      markX = point.x;
+      markY = point.y;
+    }
     if (this.marks.length >= this.cfg.max) this.marks.shift();
     this.marks.push({
       x: markX,

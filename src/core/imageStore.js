@@ -8,7 +8,11 @@ function open() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
     req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => db.close();
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
   });
 }
@@ -33,3 +37,11 @@ function run(mode, fn) {
 export const putImage = (id, blob) => run('readwrite', (s) => s.put(blob, id));
 export const getImage = (id) => run('readonly', (s) => s.get(id));
 export const deleteImage = (id) => run('readwrite', (s) => s.delete(id));
+
+export async function requestPersistentImageStorage() {
+  try {
+    return navigator.storage?.persist ? await navigator.storage.persist() : false;
+  } catch {
+    return false;
+  }
+}

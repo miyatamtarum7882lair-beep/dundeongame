@@ -132,6 +132,10 @@ export class Combat extends Emitter {
     this.guarding = false;
   }
 
+  heroTurnStart() {
+    this.flashback.onHeroTurn();
+  }
+
   // ---- 主人公の行動 ----
   toggleWeapon() {
     const hs = this.hs;
@@ -264,7 +268,7 @@ export class Combat extends Emitter {
 
   // ---- 敵の行動 ----
   // 戻り値: 'move'（呼び出し側で近づく）または null（行動した・何もしない）
-  enemyDecide(e, { dist, sees }) {
+  enemyDecide(e, { dist, sees, bindImmediately = false }) {
     const { B, p } = this;
     const def = ENEMIES_BY_ID[e.speciesId];
     const W = B.battle.baseWeights;
@@ -312,6 +316,10 @@ export class Combat extends Emitter {
     const picked = pickWeighted(applyLearning(actions, ctx, B));
     if (!picked) return null;
     if (picked.category === 'move') return 'move';
+    if (picked.category === 'bind' && bindImmediately) {
+      this.startBound(e, picked.skillId);
+      return null;
+    }
     if (picked.category === 'bind' || B.skills[picked.skillId]?.windup) {
       this.prepareSkill(e, picked.skillId, ctx);
       return null;
@@ -362,9 +370,7 @@ export class Combat extends Emitter {
     this.emit('boundStart', { binder: e, skillId, isBackBind });
     this.requestFlashback('bind', e, SKILL_DEFS[skillId]?.attr ?? this.attrOf(e.speciesId), skillId);
     this.emit('se', { id: SKILL_DEFS[skillId]?.se ?? 'bind', tx: e.tx, ty: e.ty });
-    const from = this.head(e);
-    const to = this.body(this.exp.hero);
-    this.fx({ type: 'stream', delay: 0.1, from, to, count: 9, durSec: 0.45, arcPx: 24 });
+    this.bindEffect(e, skillId, false);
     this.fx({ type: 'tint', delay: 0.15 });
     this.emit('persist');
   }
@@ -398,29 +404,35 @@ export class Combat extends Emitter {
         ty: e.ty,
         gain: effect?.gain ?? 1
       });
-      this.fx({ type: 'impact', x: this.body(this.exp.hero).x, y: this.body(this.exp.hero).y, size: 46 });
-      const color = effect?.color ? `rgb(${effect.color.join(',')})` : undefined;
-      for (const fx of effect?.fx ?? []) {
-        if (fx === 'kiss') {
-          this.fx({
-            type: 'kiss',
-            x: this.body(this.exp.hero).x,
-            y: this.head(this.exp.hero).y + 10,
-            dx: Math.sign(e.tx - this.exp.hero.tx),
-            dy: Math.sign(e.ty - this.exp.hero.ty)
-          });
-        } else if (fx === 'bindHeartWave') {
-          this.fx({ type: 'bindHeartWave', x: this.body(this.exp.hero).x, y: this.head(this.exp.hero).y, color });
-        } else if (fx === 'hearts') {
-          this.fx({ type: 'hearts', x: this.body(this.exp.hero).x, y: this.head(this.exp.hero).y, count: 9, size: 1, color });
-        } else if (fx === 'sparkle') {
-          this.fx({ type: 'sparkle', x: this.body(this.exp.hero).x, y: this.head(this.exp.hero).y, color });
-        }
-      }
+      this.bindEffect(e, skillId, false);
       this.emit('boundChanged', { binders: bound.binders.map((b) => b.unit) });
       this.climax.extend();
     }
     return true;
+  }
+
+  bindEffect(e, skillId, pulse = false) {
+    const hero = this.exp.hero;
+    const body = this.body(hero);
+    const head = this.head(hero);
+    const dx = Math.sign(e.tx - hero.tx);
+    const dy = Math.sign(e.ty - hero.ty);
+    const attr = SKILL_DEFS[skillId]?.attr ?? this.attrOf(e.speciesId);
+    const scale = pulse ? 0.72 : 1;
+    if (attr === 'mouth') {
+      this.fx({ type: 'kiss', x: body.x + dx * 16, y: head.y + 8 + dy * 8, dx, dy });
+    } else if (attr === 'bust') {
+      this.fx({ type: pulse ? 'hearts' : 'bindHeartWave', x: body.x, y: body.y - 22, count: 5, size: scale, color: '#ff9dcc' });
+      if (!pulse) this.fx({ type: 'impact', x: body.x, y: body.y - 20, size: 38 });
+    } else if (attr === 'hip') {
+      this.fx({ type: 'slash', x: body.x, y: body.y + 8, dx: dx || 1, dy: dy || 0 });
+      if (!pulse) this.fx({ type: 'ring', x: body.x, y: body.y + 8, r: 42 });
+    } else if (skillId === 'footStomp') {
+      this.fx({ type: 'impact', x: body.x, y: body.y + 34, size: 42 });
+      this.fx({ type: 'shake', power: pulse ? 0.35 : 0.7 });
+    } else {
+      this.fx({ type: 'sparkle', x: body.x, y: body.y + 34, color: '#ffe38a' });
+    }
   }
 
   refreshBoundRequirement() {
@@ -517,7 +529,6 @@ export class Combat extends Emitter {
       this.gainDrainExperience(unit, res.lost * B.bound.expShareRate);
     }
     const n = bound.binders.length;
-    const hb = this.body(this.exp.hero);
     for (const { unit } of bound.binders) {
       this.emit('se', {
         id: 'climaxPulse',
@@ -527,23 +538,10 @@ export class Combat extends Emitter {
         gain: 1 / Math.sqrt(n),
         params: { progress }
       });
-      this.fx({
-        type: 'stream',
-        from: this.head(unit),
-        to: { ...hb, y: hb.y - 22 },
-        count: 8,
-        durSec: 0.6,
-        arcPx: 30
-      });
     }
-    this.fx({
-      type: 'hearts',
-      x: hb.x,
-      y: this.head(this.exp.hero).y,
-      count: 6 + Math.round(6 * progress),
-      size: 1.1
-    });
+    for (const { unit, skillId } of bound.binders) this.bindEffect(unit, skillId, true);
     this.fx({ type: 'shake', power: 0.6 + 0.8 * progress });
+    this.emit('drainPulse', { strength: 0.6 });
     this.emit('persist');
   }
 
@@ -569,8 +567,9 @@ export class Combat extends Emitter {
       });
       this.fx({ type: 'shake', power: 1.4 });
       this.fx({ type: 'tint' });
-      this.fx({ type: 'ring', x: hb.x, y: hb.y, r: 70, color: '#ff4fa3' });
-      this.fx({ type: 'hearts', x: hb.x, y: this.head(hero).y, count: 14, size: 1.3 });
+      this.fx({ type: 'ring', x: hb.x, y: hb.y, r: 112, color: '#ff4fa3' });
+      this.fx({ type: 'ring', delay: 0.2, x: hb.x, y: hb.y, r: 74, color: '#ff9dcc' });
+      this.emit('drainPulse', { strength: 1 });
       if (payload.hpLoss) {
         this.fx({
           type: 'damage',
@@ -583,6 +582,15 @@ export class Combat extends Emitter {
         });
       }
       this.emit('log', 'climaxStart', { hpLoss: payload.hpLoss ?? 0 });
+    } else if (name === 'climaxRelease') {
+      const first = this.bound?.binders[0];
+      this.emit('se', { id: 'climaxPulse', tx: first?.unit.tx ?? hero.tx, ty: first?.unit.ty ?? hero.ty, gain: 1.15 });
+      this.fx({ type: 'ring', x: hb.x, y: hb.y, r: 86, color: '#ff4fa3' });
+      this.fx({ type: 'hearts', x: hb.x, y: this.head(hero).y, count: 12, size: 1.25 });
+      for (const { unit } of this.bound?.binders ?? []) {
+        const point = this.body(unit);
+        this.fx({ type: 'impact', x: point.x, y: point.y, size: 48 });
+      }
     } else if (name === 'climaxExtend') {
       this.emit('se', { id: 'climaxExtend' });
       this.fx({ type: 'ring', x: hb.x, y: hb.y, r: 90, color: '#ff4fa3' });
@@ -612,6 +620,7 @@ export class Combat extends Emitter {
     this.emit('anim', { unit: this.exp.hero, tag: 'down' });
     this.bound = null;
     this.emit('boundEnd', { escaped: false, defeated: true });
+    this.emit('se', { id: 'bindRelease', tx: this.exp.hero.tx, ty: this.exp.hero.ty });
     this.emit('persist');
   }
 
@@ -631,10 +640,7 @@ export class Combat extends Emitter {
     const wasClimax = this.climax.isClimax();
     this.checkClimaxStart();
     if (!this.bound) return;
-    if (wasClimax) {
-      this.climax.update(1);
-      return;
-    }
+    if (wasClimax) return;
     if (this.climax.isClimax()) return;
     bound.elapsed += 1;
     bound.sincePulse += 1;
@@ -691,19 +697,15 @@ export class Combat extends Emitter {
     const skillName = DEFEAT_SKILLS[binder.skillId]?.name ?? binder.skillId;
     this.emit('log', 'heroDrained', { name: binder.unit.name, skill: skillName, amount });
     if (hs.mp === 0) this.emit('log', 'mpEmpty', {});
-    this.emit('fx', {
-      type: 'stream',
-      from: this.head(binder.unit),
-      to: { ...this.body(this.exp.hero), y: this.body(this.exp.hero).y - 22 },
-      count: 12,
-      durSec: 0.7,
-      arcPx: 36
-    });
-    this.emit('fx', { type: 'hearts', x: this.body(this.exp.hero).x, y: this.head(this.exp.hero).y, count: 5, size: 1.1 });
+    for (const { unit, skillId } of bound.binders) this.bindEffect(unit, skillId, true);
+    this.emit('drainPulse', { strength: 1 });
     this.emit('persist');
   }
 
   gainDrainExperience(enemy, amount) {
+    if (!(amount > 0)) return;
+    enemy.exp += amount;
+    this.emit('enemyExperience', { enemy, amount });
     if (!enemy.advancedSkill || enemy.advancedSkillUnlocked) return;
     enemy.drainExp += amount;
     if (enemy.drainExp < this.B.enemy.specialUnlockDrain) return;
@@ -867,6 +869,7 @@ export class Combat extends Emitter {
     if (mpLoss > 0) {
       this.gainDrainExperience(e, mpLoss);
       this.fx({ type: 'damage', delay: d + 0.26, x: hb.x, y: this.head(hero).y - 26, text: `MP -${mpLoss}`, style: 'mp' });
+      this.emit('drainPulse', { strength: 0.6, delay: d + 0.26 });
       this.emit('log', 'heroDrained', { name: e.name, skill: skillName, amount: mpLoss });
       if (hs.mp === 0) this.emit('log', 'mpEmpty', {});
       this.abilityEvents(addAbilityProgress(p, e.speciesId, drainAbilityId(attr), B, { pts: 1, grownThisBattle: this.grown }));
@@ -936,7 +939,7 @@ export class Combat extends Emitter {
     const hb = this.body(hero);
     this.emit('anim', { unit: u, tag: 'cast', delay: d });
     this.fx({ type: 'sparkle', delay: d + 0.3, x: hb.x, y: hb.y });
-    this.fx({ type: 'hearts', delay: d + 0.3, x: hb.x, y: hb.y - 10, count: 4, size: 0.7 });
+    this.fx({ type: 'ring', delay: d + 0.3, x: hb.x, y: hb.y - 10, r: 48 });
     if (heal > 0) {
       this.fx({ type: 'damage', delay: d + 0.35, x: hb.x, y: this.head(hero).y, text: `+${heal}`, style: 'heal' });
     }

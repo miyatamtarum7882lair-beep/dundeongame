@@ -2,9 +2,10 @@
 import { B } from './data/balance.js';
 import { SE_TABLE } from './data/seTable.js';
 import { flashbackSeFor } from './data/flashbackData.js';
-import { ENEMIES_BY_ID, ATTRS } from './data/enemies.js';
+import { ENEMIES, ENEMIES_BY_ID, ATTRS } from './data/enemies.js';
+import { getCharmPointsForAttr, getCharmPoints, setCharmPoints, resetCharmPoint } from './data/charmPoint.js';
 import { DEFEAT_SKILLS } from './data/defeatSkills.js';
-import { loadSave, saveNow, scheduleSave, flushSave } from './core/storage.js';
+import { loadSave, saveNow, scheduleSave, flushSave, saveCharmPointsNow } from './core/storage.js';
 import { createLayers, fitLayers, beginFrame, clientToLogical } from './core/renderScale.js';
 import { GameClock } from './core/timer.js';
 import { Input } from './core/input.js';
@@ -20,10 +21,15 @@ import { Exploration } from './dungeon/exploration.js';
 import { DungeonView } from './ui/dungeonView.js';
 import { drawMinimap } from './ui/minimap.js';
 import { drawExploreHud } from './ui/exploreHud.js';
-import { getPortrait, initPortraitLoader, preloadPortrait, releasePortrait } from './ui/portraitLoader.js';
+import { getPortrait, initPortraitLoader, preloadPortrait, importPortrait } from './ui/portraitLoader.js';
+import { BoundCharmView } from './ui/boundCharmView.js';
+import { openCharmPointEditor } from './ui/charmPointEditor.js';
 import { HeartFx, loadHeartOverrides } from './ui/heartFx.js';
 import { KissMarkLayer, loadKissmarkOverrides } from './ui/kissmark.js';
 import { BattleFx } from './ui/battleFx.js';
+import { DrainFx } from './ui/drainFx.js';
+import { bindSideOf } from './ui/boundCharmMath.js';
+import { Heartbeat } from './core/heartbeat.js';
 import { drawEnemyLabels } from './ui/enemyLabels.js';
 import { drawPartyPanel } from './ui/partyPanel.js';
 import { drawDebuffPanel } from './ui/debuffPanel.js';
@@ -89,24 +95,60 @@ eventState.on('watchdog', (owner) => {
 
 const combat = exploration.combat;
 timeMode.tickSecProvider = () => combat.climax.boundTickSec();
-const boundPortraitIds = new Set();
 let boundPortraitLoading = false;
-function syncBoundPortraits(binders) {
-  const nextIds = new Set(binders.map((unit) => unit.speciesId));
-  const loading = [];
-  for (const id of nextIds) {
-    if (boundPortraitIds.has(id)) continue;
-    boundPortraitIds.add(id);
-    loading.push(preloadPortrait(id));
+let titleActive = false;
+const charmCfg = {
+  ...B.charm,
+  get centerTransparency() {
+    return save.settings.charmCenterTransparency ?? B.charm.centerTransparency;
   }
-  for (const id of boundPortraitIds) {
-    if (nextIds.has(id)) continue;
-    boundPortraitIds.delete(id);
-    releasePortrait(id);
-  }
-  return Promise.all(loading);
+};
+async function loadEnemyPortrait(speciesId) {
+  await preloadPortrait(speciesId);
+  return getPortrait(speciesId);
 }
+const boundCharm = new BoundCharmView({
+  cfg: charmCfg,
+  getPoint: (speciesId, attr, skillId) => getCharmPointsForAttr(save.persistent, speciesId, attr, B.charm, skillId),
+  loadPortrait: loadEnemyPortrait,
+  getHero: () => exploration.hero
+});
 const later = (sec, fn) => (sec > 0 ? clock.after(sec, fn) : fn());
+const heroMpRatio = () => (combat.hs.maxMp > 0 ? combat.hs.mp / combat.hs.maxMp : 1);
+const drainFx = new DrainFx({
+  cfg: B.drainFx,
+  render: B.render,
+  getSettings: () => save.settings,
+  getState: () => {
+    const hero = exploration.hero;
+    const climax = combat.climax;
+    return {
+      mpRatio: heroMpRatio(),
+      // The particle origin follows the center used by the bound charm portraits.
+      hero: { x: charmCfg.anchorX, y: charmCfg.anchorY },
+      climax: climax.isClimax()
+        ? { progress: climax.duration > 0 ? Math.min(1, climax.elapsed / climax.duration) : 0 }
+        : null,
+      binders: (combat.bound?.binders ?? []).map((binder) => {
+        const side = bindSideOf(
+          binder.unit.tx - hero.tx,
+          binder.unit.ty - hero.ty,
+          hero.dir
+        );
+        return {
+          front: { dx: 0, dy: -1 },
+          back: { dx: 0, dy: 1 },
+          left: { dx: -1, dy: 0 },
+          right: { dx: 1, dy: 0 }
+        }[side];
+      })
+    };
+  }
+});
+const heartbeat = new Heartbeat({
+  cfg: B.drainFx.heartbeat,
+  onBeat: ({ k }) => audio.playSE('lowMpHeartbeat', { gain: 0.6 + 0.4 * k })
+});
 function spatialAudioOptions(tx, ty) {
   if (!Number.isFinite(tx) || !Number.isFinite(ty)) {
     return { pan: 0, vertical: 0, behind: false };
@@ -133,6 +175,14 @@ combat.on('se', ({ id, tx, ty, delay = 0, behind = false, gain = 1, ally = false
   })
 );
 combat.on('log', (kind, params) => floatLog.pushKind(kind, params));
+combat.on('drainPulse', ({ strength = 1, delay = 0 }) =>
+  later(delay, () => drainFx.pulse(strength))
+);
+combat.on('enemyExperience', ({ enemy, amount }) => {
+  if (combat.bound?.binders.some((binder) => binder.unit === enemy) && boundCharm.addExpPopup(enemy, amount)) return;
+  const pos = combat.body(enemy);
+  battleFx.handle({ type: 'damage', x: pos.x, y: combat.head(enemy).y - 18, text: `+${Math.max(1, Math.round(amount))} EXP`, style: 'info' });
+});
 combat.on('learning', (events) => announceLearning(events));
 combat.on('persist', () => {
   save.currentRun.buffs = combat.buffs.serialize();
@@ -150,7 +200,7 @@ combat.on('boundStart', () => {
   boundPortraitLoading = true;
   void (async () => {
     try {
-      await syncBoundPortraits(combat.bound?.binders.map((b) => b.unit) ?? []);
+      await boundCharm.sync(combat.bound?.binders ?? []);
     } catch (error) {
       console.error('拘束画像の読み込みに失敗しました', error);
     } finally {
@@ -160,12 +210,13 @@ combat.on('boundStart', () => {
   })();
 });
 combat.on('boundChanged', ({ binders }) => {
-  void syncBoundPortraits(binders).catch((error) => {
+  const currentBinders = binders.map((unit) => combat.bound?.binders.find((binder) => binder.unit === unit)).filter(Boolean);
+  void boundCharm.sync(currentBinders).catch((error) => {
     console.error('拘束画像の読み込みに失敗しました', error);
   });
 });
 combat.on('boundEnd', () => {
-  syncBoundPortraits([]);
+  boundCharm.clear();
   if (timeMode.mode === 'BOUND') timeMode.leave();
 });
 timeMode.on('boundSecond', () => {
@@ -197,6 +248,90 @@ exploration.on('dungeonClear', () => {
   floatLog.push({ text: 'ダンジョンをクリアした！ 最初からやり直します', color: 'gold', mark: '▲', importance: 'major' });
 });
 exploration.start();
+showTitleScreen();
+
+function openCharmEditor() {
+  return openCharmPointEditor({
+    enemies: ENEMIES,
+    attrLabels: {
+      ...Object.fromEntries(Object.entries(ATTRS).map(([key, def]) => [key, def.label])),
+      hand: '手'
+    },
+    cfg: charmCfg,
+    loadPortrait: loadEnemyPortrait,
+    importPortrait: async (id, file) => {
+      const result = await importPortrait(id, file);
+      if (!result.ok) throw new Error(result.message);
+      return getPortrait(id);
+    },
+    getPoints: (id) => getCharmPoints(save.persistent, id, B.charm),
+    setPoints: (id, points) => {
+      const stored = setCharmPoints(save.persistent, id, points, B.charm);
+      saveCharmPointsNow(save.persistent.charmPoints);
+      flushSave(save);
+      return stored;
+    },
+    resetPoint: (id) => {
+      resetCharmPoint(save.persistent, id);
+      saveCharmPointsNow(save.persistent.charmPoints);
+      flushSave(save);
+      return getCharmPoints(save.persistent, id, B.charm);
+    },
+    onTransparencyChange: (value) => {
+      save.settings.charmCenterTransparency = Math.min(0.9, Math.max(0, value));
+      scheduleSave(save);
+    },
+    onTransparencyCommit: () => flushSave(save)
+  });
+}
+
+function showTitleScreen() {
+  titleActive = true;
+  clock.pause('title');
+  const root = document.createElement('main');
+  Object.assign(root.style, {
+    position: 'fixed', inset: '0', zIndex: '900', display: 'grid', placeItems: 'center',
+    background: 'radial-gradient(ellipse at center, rgba(46, 25, 55, 0.94), rgba(6, 5, 12, 0.98))',
+    color: '#fff', fontFamily: B.ui.fontFamily
+  });
+  const panel = document.createElement('section');
+  Object.assign(panel.style, {
+    width: 'min(560px, calc(100vw - 40px))', padding: '42px 36px', boxSizing: 'border-box',
+    textAlign: 'center', background: 'rgba(18, 13, 27, 0.88)', border: '1px solid #9d668d',
+    borderRadius: '14px', boxShadow: '0 18px 60px rgba(0,0,0,.55)'
+  });
+  const heading = document.createElement('h1');
+  heading.textContent = 'ダンジョンゲーム';
+  Object.assign(heading.style, { margin: '0 0 12px', fontSize: 'clamp(28px, 5vw, 44px)', letterSpacing: '.08em' });
+  const subtitle = document.createElement('p');
+  subtitle.textContent = '冒険の準備を整えましょう';
+  Object.assign(subtitle.style, { margin: '0 0 30px', color: '#d7bfd7' });
+  const makeButton = (label, action, primary = false) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    Object.assign(button.style, {
+      display: 'block', width: '100%', marginTop: '12px', padding: '14px 18px', cursor: 'pointer',
+      color: '#fff', font: `600 16px ${B.ui.fontFamily}`, borderRadius: '8px',
+      border: primary ? '1px solid #ff9dcc' : '1px solid #65546d',
+      background: primary ? 'linear-gradient(135deg, #a83e78, #6c397f)' : '#292230'
+    });
+    button.addEventListener('click', action);
+    return button;
+  };
+  panel.append(
+    heading,
+    subtitle,
+    makeButton('冒険を始める', () => {
+      titleActive = false;
+      root.remove();
+      clock.resume('title');
+    }, true),
+    makeButton('チャームポイント設定', () => openCharmEditor())
+  );
+  root.append(panel);
+  document.body.append(root);
+}
 
 function canExplore() {
   return !clock.paused && !boundPortraitLoading && timeMode.mode === 'TURN' && eventState.state === 'NONE';
@@ -204,6 +339,11 @@ function canExplore() {
 
 // ---- 入力 ----
 function handleInput() {
+  if (titleActive) {
+    input.drain();
+    input.drainRaw();
+    return;
+  }
   const exploreActions = [];
   for (const ev of input.drain()) {
     if (ev.action === 'pause') {
@@ -324,11 +464,7 @@ function runDebugKey(code) {
 // ---- 描画 ----
 function logRect() {
   const { logicalWidth: w, logicalHeight: h } = B.render;
-  // 拘束中は、一枚絵パネルを避けて、マップ側の範囲に出す
-  const width = timeMode.mode === 'BOUND' || boundPortraitLoading
-    ? w * (1 - B.boundPanel.widthRatio)
-    : w;
-  return { x: 0, y: 0, w: width, h };
+  return { x: 0, y: 0, w, h };
 }
 
 function debugLines() {
@@ -368,107 +504,30 @@ function drawPauseText(g) {
   g.restore();
 }
 
-function drawBoundHud(g) {
+function drawBoundGauge(g) {
   const bound = combat.bound;
-  if ((timeMode.mode !== 'BOUND' && !boundPortraitLoading) || !bound) return;
-  const { logicalWidth: w, logicalHeight: h } = B.render;
-  const x = Math.round(w * (1 - B.boundPanel.widthRatio));
-  const panelW = w - x;
-  const pad = 20;
-  const barW = panelW - pad * 2;
-  const escapeRatio = bound.escapeProgress / bound.requiredClicks;
-  const mpRatio = save.currentRun.hero.mp / save.currentRun.hero.maxMp;
-
+  if (!bound) return;
+  const width = 500;
+  const height = 18;
+  const x = (B.render.logicalWidth - width) / 2;
+  const y = B.render.logicalHeight - 50;
+  const ratio = bound.requiredClicks > 0 ? clamp(bound.escapeProgress / bound.requiredClicks, 0, 1) : 0;
+  const locked = combat.climax.escapeLocked();
   g.save();
-  g.fillStyle = 'rgba(24, 12, 28, 0.88)';
-  g.fillRect(x, 0, panelW, h);
-  g.strokeStyle = 'rgba(255, 170, 212, 0.75)';
+  g.fillStyle = 'rgba(12, 8, 18, 0.88)';
+  g.fillRect(x - 18, y - 31, width + 36, 58);
+  g.strokeStyle = 'rgba(255, 222, 242, 0.85)';
   g.lineWidth = 2;
-  g.strokeRect(x + 1, 1, panelW - 2, h - 2);
-  g.textAlign = 'left';
-  g.textBaseline = 'top';
-  g.fillStyle = '#ffe3f1';
-  g.font = `bold 25px ${B.ui.fontFamily}`;
-  g.fillText(`拘束中（${bound.binders.length}人）`, x + pad, 26);
-
-  const cardTop = 72;
-  const cardBottom = 412;
-  const gap = 8;
-  const columns = bound.binders.length === 1 ? 1 : 2;
-  const rows = Math.ceil(bound.binders.length / columns);
-  const cardW = (barW - gap * (columns - 1)) / columns;
-  const cardH = (cardBottom - cardTop - gap * (rows - 1)) / rows;
-  bound.binders.forEach(({ unit, attr }, index) => {
-    const col = index % columns;
-    const row = Math.floor(index / columns);
-    const cx = x + pad + col * (cardW + gap);
-    const cy = cardTop + row * (cardH + gap);
-    const def = ENEMIES_BY_ID[unit.speciesId];
-    const image = getPortrait(unit.speciesId);
-    const attrInfo = ATTRS[attr] ?? ATTRS[def?.attr] ?? ATTRS.all;
-
-    g.fillStyle = 'rgba(255, 220, 237, 0.08)';
-    g.fillRect(cx, cy, cardW, cardH);
-    g.strokeStyle = attrInfo.color;
-    g.lineWidth = 2;
-    g.strokeRect(cx + 1, cy + 1, cardW - 2, cardH - 2);
-    g.save();
-    g.beginPath();
-    g.rect(cx + 3, cy + 3, cardW - 6, cardH - 30);
-    g.clip();
-    if (image?.width && image?.height) {
-      const maxW = cardW - 12;
-      const maxH = cardH - 36;
-      const scale = Math.min(maxW / image.width, maxH / image.height);
-      const drawW = image.width * scale;
-      const drawH = image.height * scale;
-      g.drawImage(image, cx + (cardW - drawW) / 2, cy + (cardH - 30 - drawH) / 2, drawW, drawH);
-    } else {
-      const centerX = cx + cardW / 2;
-      const centerY = cy + (cardH - 24) / 2;
-      const silhouette = g.createLinearGradient(centerX, cy, centerX, cy + cardH - 30);
-      silhouette.addColorStop(0, 'rgba(255, 178, 215, 0.32)');
-      silhouette.addColorStop(1, 'rgba(116, 37, 89, 0.18)');
-      g.fillStyle = silhouette;
-      g.beginPath();
-      g.ellipse(centerX, centerY - 5, Math.min(cardW * 0.16, cardH * 0.13), Math.min(cardH * 0.16, 34), 0, 0, Math.PI * 2);
-      g.fill();
-      g.beginPath();
-      g.ellipse(centerX, centerY + cardH * 0.12, Math.min(cardW * 0.31, cardH * 0.27), Math.min(cardH * 0.28, 62), 0, 0, Math.PI * 2);
-      g.fill();
-      g.fillStyle = '#ffe3f1';
-      g.font = `12px ${B.ui.fontFamily}`;
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText(boundPortraitLoading ? '画像読み込み中' : '画像未登録', centerX, cy + cardH - 47);
-    }
-    g.restore();
-    g.font = `bold 13px ${B.ui.fontFamily}`;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillStyle = '#fff4f8';
-    g.fillText(`${unit.name} ・ ${attrInfo.label}`, cx + cardW / 2, cy + cardH - 15, cardW - 8);
-  });
-
-  g.textAlign = 'left';
-  g.textBaseline = 'top';
-  g.font = `16px ${B.ui.fontFamily}`;
-  g.fillStyle = '#ffffff';
-  g.fillText('脱出進行', x + pad, 430);
-  g.fillText(`${bound.escapeProgress.toFixed(0)} / ${bound.requiredClicks}`, x + pad, 454);
-  g.fillStyle = 'rgba(0, 0, 0, 0.65)';
-  g.fillRect(x + pad, 480, barW, 12);
-  g.fillStyle = '#ff8fbe';
-  g.fillRect(x + pad, 480, barW * clamp(escapeRatio, 0, 1), 12);
-  g.fillStyle = '#ffffff';
-  g.fillText(`主人公 MP  ${save.currentRun.hero.mp} / ${save.currentRun.hero.maxMp}`, x + pad, 510);
-  g.fillStyle = 'rgba(0, 0, 0, 0.65)';
-  g.fillRect(x + pad, 536, barW, 8);
-  g.fillStyle = '#6bd6ef';
-  g.fillRect(x + pad, 536, barW * clamp(mpRatio, 0, 1), 8);
-  g.fillStyle = '#ffd8e9';
-  g.fillText(`次の吸収まで 約${Math.max(0, B.bound.pulseSec - bound.pulseTimer).toFixed(0)}秒`, x + pad, 560);
-  g.fillText('Enter または左クリックを連打して脱出', x + pad, h - 76, barW);
+  g.strokeRect(x - 18, y - 31, width + 36, 58);
+  g.font = `bold 15px ${B.ui.fontFamily}`;
+  g.textAlign = 'center';
+  g.textBaseline = 'bottom';
+  g.fillStyle = '#fff2f8';
+  g.fillText(locked ? '脱出できない' : `脱出進捗  ${Math.round(ratio * 100)}%`, B.render.logicalWidth / 2, y - 7);
+  g.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  g.fillRect(x, y, width, height);
+  g.fillStyle = locked ? '#8d6379' : '#ff79b7';
+  g.fillRect(x, y, width * ratio, height);
   g.restore();
 }
 
@@ -476,19 +535,21 @@ function render() {
   const { gPixel, gHires } = beginFrame(layers, B);
   dungeonView.draw(gPixel, exploration, battleFx.offset);
   battleFx.drawTint(gHires);
+  drainFx.drawEdge(gHires);
   drawEnemyLabels(gHires, dungeonView, save.persistent, B);
   battleFx.drawWorld(gHires);
   heartFx.draw(gHires);
   kissMarks.draw(gHires);
   if (save.settings.showMinimap) drawMinimap(gHires, exploration, B);
   drawExploreHud(gHires, exploration, B);
-  drawBoundHud(gHires);
+  boundCharm.draw(gHires);
+  drainFx.drawParticles(gHires);
   drawStatusPanel(
     gHires,
     buildStatusEntries({
       buffs: combat.buffs.entries(),
       afterglowTurns: combat.climax.afterglowLeft,
-      erectLeftSec: combat.flashback.erectLeftSec()
+      erectTurns: combat.flashback.erectTurnsLeft()
     })
   );
   drawPartyPanel(gHires, exploration, B);
@@ -500,6 +561,7 @@ function render() {
   });
   floatLog.draw(gHires, logRect());
   debugHud.draw(gHires, debugLines());
+  drawBoundGauge(gHires);
   if (clock.paused) drawPauseText(gHires);
 }
 
@@ -510,11 +572,19 @@ function loop(nowMs) {
   debugHud.update(clock.realDtSec);
   handleInput();
   timeMode.update(dt);
+  combat.climax.update(dt);
   combat.flashback.update(dt);
   eventState.update(clock.time);
   exploration.update(dt, input, canExplore());
   dungeonView.update(dt, exploration);
   battleFx.update(dt);
+  drainFx.update(dt);
+  heartbeat.update(dt, {
+    mpRatio: heroMpRatio(),
+    climax: combat.climax.isClimax(),
+    enabled: save.settings.lowMpHeartbeat !== false && combat.hs.hp > 0 && !combat.defeated
+  });
+  boundCharm.update(dt);
   heartFx.update(dt);
   kissMarks.update(dt);
   floatLog.update(dt);

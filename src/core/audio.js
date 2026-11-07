@@ -156,10 +156,6 @@ export const SYNTH = {
     noise(rig, { filter: 'lowpass', f0: 900, f1: 150, q: 0.8, dur: 0.4, gain: 0.25, attack: 0.01 });
     tone(rig, { type: 'triangle', f0: 70, f1: 50, start: 0.1, dur: 0.4, gain: 0.18, attack: 0.02 });
   },
-  lowMpHeartbeat(rig) {
-    tone(rig, { f0: 70, f1: 45, dur: 0.16, gain: 0.5, attack: 0.004 });
-    tone(rig, { f0: 60, f1: 40, start: 0.18, dur: 0.2, gain: 0.38, attack: 0.004 });
-  },
   bindRelease(rig) {
     [392, 494, 587].forEach((f, i) => {
       tone(rig, { f0: f, start: i * 0.08, dur: 0.8, gain: 0.1, attack: 0.05 });
@@ -198,6 +194,28 @@ export const SYNTH = {
       tone(rig, { f0: f, start: i * 0.09, dur: 0.9, gain: 0.09, attack: 0.06 });
     });
     noise(rig, { filter: 'highpass', f0: 3500, f1: 6500, dur: 0.6, gain: 0.06, attack: 0.2 });
+  },
+  // 低MP時の心音（ドッ・クン）。三角波で小さなスピーカーでも聞こえる倍音を足す。
+  lowMpHeartbeat(rig) {
+    const { ctx, out, t0, rate } = rig;
+    const thump = (at, f0, f1, peak, dur) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(f0 * rate, t0 + at);
+      osc.frequency.exponentialRampToValueAtTime(f1 * rate, t0 + at + dur);
+      gain.gain.setValueAtTime(0.0001, t0 + at);
+      gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
+      osc.connect(gain);
+      gain.connect(out);
+      osc.start(t0 + at);
+      osc.stop(t0 + at + dur + 0.02);
+      rig.sources.push(osc);
+    };
+    thump(0, 80, 50, 0.9, 0.16);
+    thump(0.17, 70, 46, 0.6, 0.18);
+    rig.end = Math.max(rig.end, 0.17 + 0.18 + 0.05);
   },
   buffGain(rig) {
     tone(rig, { type: 'triangle', f0: 880, dur: 0.18, gain: 0.12, attack: 0.005 });
