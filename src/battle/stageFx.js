@@ -7,7 +7,14 @@
 //   index, count, progress ヒット番号・ヒット数・進み具合（0〜1）
 //   hpLoss, mpLoss, expLost 直近のヒットの量（start は 0、end は合計）
 //   opts                   台本のキュー（count / size / power / color / r など）
+//   theme                  敵のテーマ色（enemyThemes.js）。色の '$main' などはこれで置き換える
 // }
+//
+// 位置の指定（anchor / from / to）:
+//   hero / heroHead / heroFeet / enemy / enemyHead / enemyFeet / mid（両者の間）
+//   ox / oy で、さらにずらせる
+import { resolveColor } from '../data/enemyThemes.js';
+
 const parts = (c) => ({
   hb: c.hero.body,
   hh: c.hero.head,
@@ -102,8 +109,8 @@ export const STAGE_FX = {
   },
 
   hearts(c) {
-    const { hb, hh } = parts(c);
-    return [{ type: 'hearts', x: hb.x, y: hh.y - 10, count: c.opts.count ?? 4, size: c.opts.size ?? 0.9 }];
+    const pt = anchorPoint(c, c.opts.anchor ?? 'heroHead', { oy: -10, ...c.opts });
+    return [{ type: 'hearts', ...pt, count: c.opts.count ?? 4, size: c.opts.size ?? 0.9, color: col(c, c.opts.color) }];
   },
 
   kissMark(c) {
@@ -112,24 +119,25 @@ export const STAGE_FX = {
   },
 
   impact(c) {
-    const { hb } = parts(c);
-    return [{ type: 'impact', x: hb.x, y: hb.y, size: c.opts.size ?? 30 }];
+    const pt = anchorPoint(c, c.opts.anchor ?? 'hero', c.opts);
+    return [{ type: 'impact', ...pt, size: c.opts.size ?? 30, color: col(c, c.opts.color) }];
   },
 
   sparks(c) {
-    const { hb } = parts(c);
-    return [{ type: 'sparks', x: hb.x, y: hb.y, color: c.opts.color ?? '#ffb3d1', count: c.opts.count ?? 8 }];
+    const pt = anchorPoint(c, c.opts.anchor ?? 'hero', c.opts);
+    return [{ type: 'sparks', ...pt, color: col(c, c.opts.color ?? '#ffb3d1'), count: c.opts.count ?? 8 }];
   },
 
-  // 注意: BattleFx の ring は color を読まない（既知の不具合）。直すまでは色が反映されない
   ring(c) {
-    const { hb } = parts(c);
-    return [{ type: 'ring', x: hb.x, y: hb.y, r: c.opts.r ?? 50, color: c.opts.color ?? '#ff9ccf' }];
+    const pt = anchorPoint(c, c.opts.anchor ?? 'hero', c.opts);
+    return [{
+      type: 'ring', ...pt, r: c.opts.r ?? 50, color: col(c, c.opts.color ?? '#ff9ccf'),
+      width: c.opts.width, squash: c.opts.squash, alpha: c.opts.alpha, life: c.opts.life, glow: c.opts.glow, fill: c.opts.fill
+    }];
   },
 
   enemyRing(c) {
-    const { eb } = parts(c);
-    return [{ type: 'ring', x: eb.x, y: eb.y, r: c.opts.r ?? 50, color: c.opts.color ?? '#ff9ccf' }];
+    return STAGE_FX.ring({ ...c, opts: { ...c.opts, anchor: c.opts.anchor ?? 'enemy' } });
   },
 
   shake(c) {
@@ -140,9 +148,73 @@ export const STAGE_FX = {
     return [{ type: 'tint' }];
   },
 
+  // ---- 汎用部品（キューの値をそのまま BattleFx へ渡す。色はテーマ参照を解決する）----
+  burst(c) {
+    return [{ ...fxOpts(c), type: 'burst', ...anchorPoint(c, c.opts.anchor ?? 'hero', c.opts) }];
+  },
+  swirl(c) {
+    return [{ ...fxOpts(c), type: 'swirl', ...anchorPoint(c, c.opts.anchor ?? 'hero', c.opts) }];
+  },
+  glyph(c) {
+    return [{ ...fxOpts(c), type: 'glyph', ...anchorPoint(c, c.opts.anchor ?? 'heroFeet', c.opts) }];
+  },
+  tileMark(c) {
+    return [{ ...fxOpts(c), type: 'tileMark', ...anchorPoint(c, c.opts.anchor ?? 'heroFeet', c.opts) }];
+  },
+  callout(c) {
+    const pt = anchorPoint(c, c.opts.anchor ?? 'heroHead', { oy: -18, ...c.opts });
+    // texts: ヒットの番号ごとに文字を変える（カウントダウンなど）
+    const text = c.opts.texts?.[Math.min(c.index, c.opts.texts.length - 1)] ?? c.opts.text;
+    return [{ ...fxOpts(c), type: 'callout', ...pt, text }];
+  },
+  bubble(c) {
+    const pt = anchorPoint(c, c.opts.anchor ?? 'enemyHead', { oy: -10, ...c.opts });
+    return [{ ...fxOpts(c), type: 'bubble', ...pt }];
+  },
+  flow(c) {
+    return [{
+      ...fxOpts(c), type: 'flow',
+      from: anchorPoint(c, c.opts.from ?? 'enemyHead', c.opts.fromOffset ?? { oy: 24 }),
+      to: anchorPoint(c, c.opts.to ?? 'hero', c.opts.toOffset ?? { oy: -16 })
+    }];
+  },
+  cloud(c) {
+    return [{
+      ...fxOpts(c), type: 'cloud',
+      from: anchorPoint(c, c.opts.from ?? 'enemyHead', c.opts.fromOffset ?? { oy: 28 }),
+      to: anchorPoint(c, c.opts.to ?? 'hero', c.opts.toOffset ?? { oy: -16 })
+    }];
+  },
+  telegraph(c) {
+    return [{
+      ...fxOpts(c), type: 'telegraph',
+      from: anchorPoint(c, c.opts.from ?? 'enemyFeet', c.opts.fromOffset),
+      to: anchorPoint(c, c.opts.to ?? 'heroFeet', c.opts.toOffset)
+    }];
+  },
+  wash(c) {
+    return [{ ...fxOpts(c), type: 'wash' }];
+  },
+  speedLines(c) {
+    const pt = anchorPoint(c, c.opts.anchor ?? 'hero', c.opts);
+    return [{ ...fxOpts(c), type: 'speedLines', ...pt }];
+  },
+  flash(c) {
+    return [{ ...fxOpts(c), type: 'flash' }];
+  },
+  // 敵から主人公の頭へ飛ぶ大きなハート（HeartFx）
+  heartProjectileFx(c) {
+    return [{
+      type: 'heartProjectile',
+      from: anchorPoint(c, c.opts.from ?? 'enemyHead', c.opts.fromOffset ?? { oy: 24 }),
+      to: anchorPoint(c, c.opts.to ?? 'heroHead', c.opts.toOffset ?? { oy: -4 }),
+      durSec: c.opts.durSec ?? 0.8, arcPx: c.opts.arcPx ?? 90, size: c.opts.size ?? 1.15
+    }];
+  },
+
   sparkle(c) {
-    const { hb, hh } = parts(c);
-    return [{ type: 'sparkle', x: hb.x, y: hh.y, color: c.opts.color }];
+    const pt = anchorPoint(c, c.opts.anchor ?? 'heroHead', c.opts);
+    return [{ type: 'sparkle', ...pt, color: col(c, c.opts.color) }];
   },
 
   breath(c) {
@@ -152,6 +224,36 @@ export const STAGE_FX = {
 
   bindHeartWave(c) {
     const { hb, hh } = parts(c);
-    return [{ type: 'bindHeartWave', x: hb.x, y: hh.y, color: c.opts.color }];
+    return [{ type: 'bindHeartWave', x: hb.x, y: hh.y, color: col(c, c.opts.color) }];
   }
 };
+
+// ---- 位置と色 ----
+export function anchorPoint(c, name, { ox = 0, oy = 0 } = {}) {
+  const hb = c.hero.body;
+  const eb = c.enemy.body;
+  let pt;
+  switch (name) {
+    case 'heroHead': pt = { x: hb.x, y: c.hero.head.y }; break;
+    case 'heroFeet': pt = { x: hb.x, y: hb.y + 42 }; break;
+    case 'enemy': pt = { x: eb.x, y: eb.y }; break;
+    case 'enemyHead': pt = { x: eb.x, y: c.enemy.head.y }; break;
+    case 'enemyFeet': pt = { x: eb.x, y: eb.y + 42 }; break;
+    case 'mid': pt = { x: (hb.x + eb.x) / 2, y: (hb.y + eb.y) / 2 }; break;
+    default: pt = { x: hb.x, y: hb.y };
+  }
+  return { x: pt.x + ox, y: pt.y + oy };
+}
+
+const col = (c, v) => (c.theme ? resolveColor(v, c.theme) : v);
+
+// キューから、位置・発火に関わるキーを除いた残り（色は解決済み）
+const SKIP = new Set(['at', 'id', 'every', 'first', 'last', 'texts', 'from', 'to', 'anchor', 'ox', 'oy', 'fromOffset', 'toOffset', 'when', 'delay']);
+function fxOpts(c) {
+  const out = {};
+  for (const [k, v] of Object.entries(c.opts)) {
+    if (SKIP.has(k)) continue;
+    out[k] = k === 'color' || k === 'colors' || k === 'sub' ? col(c, v) : v;
+  }
+  return out;
+}

@@ -6,6 +6,8 @@ const ALIAS = {
   胸: 'bust',
   尻: 'hip',
   足: 'foot',
+  手: 'hand',
+  hand: 'hand',
   mouth: 'mouth',
   bust: 'bust',
   chest: 'bust',
@@ -28,6 +30,7 @@ const ATTR_SE = {
   bust: 'bustRub',
   hip: 'hipStroke',
   foot: 'footPress',
+  hand: 'handDrain',
 };
 
 const ATTR_COLOR = {
@@ -35,6 +38,7 @@ const ATTR_COLOR = {
   bust: [255, 150, 200],
   hip: [255, 110, 170],
   foot: [255, 160, 190],
+  hand: [255, 140, 150],
 };
 
 const DEFAULT_COLOR = [255, 100, 170];
@@ -45,6 +49,7 @@ const JOIN_EFFECTS = {
   bust: { se: 'pafuDrain', gain: 1.0, color: [255, 170, 210], fx: ['hearts'] },
   hip: { se: 'hipStroke', gain: 0.8, color: [255, 130, 170], fx: ['hearts'] },
   foot: { se: 'footPress', gain: 0.7, color: [255, 160, 190], fx: ['sparkle'] },
+  hand: { se: 'handDrain', gain: 0.9, color: [255, 140, 150], fx: ['hearts', 'sparkle'] },
 };
 
 export function flashbackSeFor(attr) {

@@ -1,5 +1,6 @@
 // File: src/core/storage.js
-import { saveSchema, SAVE_VERSION, createDefaultSave } from '../data/saveSchema.js';
+import { saveSchema, SAVE_VERSION, createDefaultSave, newRunHero } from '../data/saveSchema.js';
+import { B } from '../data/balance.js';
 import { ENEMIES } from '../data/enemies.js';
 import { RACE_ABILITIES, isAbilityAvailable } from '../data/raceAbilities.js';
 
@@ -70,8 +71,11 @@ export function migrate(data) {
     hero.maxMp = (typeof hero.maxMp === 'number' ? hero.maxMp : 160) + bonus;
     hero.mp = Math.min(hero.maxMp, (typeof hero.mp === 'number' ? hero.mp : 160) + bonus);
   }
-  if (previousVersion < 11 && data.currentRun?.hero?.level === 1) {
-    data.currentRun.hero.level = 20;
+  // v13：デバッグ設定（僧侶の同行・出現頻度）を、ランではなく永続側へ移す
+  if (previousVersion < 13 && isPlainObject(data.currentRun?.debugOptions)) {
+    data.persistent ??= {};
+    data.persistent.debugSettings = { ...(data.persistent.debugSettings ?? {}), ...data.currentRun.debugOptions };
+    delete data.currentRun.debugOptions;
   }
   data.version = SAVE_VERSION;
   return data;
@@ -157,6 +161,11 @@ export function loadSave() {
 
 export function saveNow(save) {
   try {
+    // 回想部屋の模擬戦中は、始める前の状態を保存しておく（模擬戦の結果は残さない）
+    if (save.sandboxBackup) {
+      localStorage.setItem(SAVE_KEY, save.sandboxBackup);
+      return true;
+    }
     localStorage.setItem(SAVE_KEY, JSON.stringify(save));
     return true;
   } catch (error) {
@@ -187,6 +196,7 @@ export function flushSave(save) {
 // 新しいランの開始時に呼ぶ
 export function resetRun(save) {
   save.currentRun = structuredClone(saveSchema.currentRun);
+  save.currentRun.hero = newRunHero(save.persistent, B.battle.levelUp);
 }
 
 // バックアップ用

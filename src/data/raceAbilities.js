@@ -11,6 +11,8 @@ export const RACE_ABILITIES = [
     trigger: '尻属性で吸収', effect: '吸収量+10〜100%、振り向き誘惑の誘導が速くなる' },
   { id: 'drainFoot', name: '嗜虐の蹂躙（足）', attrs: ['foot'],
     trigger: '足属性で吸収', effect: '吸収量+10〜100%、踏みつけ拘束の脱出進行を軽減' },
+  { id: 'drainHand', name: '妖艶なる愛撫（手）', attrs: ['hand'],
+    trigger: '手属性で吸収', effect: '吸収量+10〜100%、撫でられるほど経験値がこぼれやすくなる' },
   { id: 'stolenArts', name: '略奪の術', attrs: null,
     trigger: '仲間を長時間拘束／寝返りの献上', effect: '仲間の能力から特殊攻撃を習得。覚え終えたらバフ・ヒールを習得・強化' },
   { id: 'weaknessLearn', name: '急所と癖の学習', attrs: null,
@@ -25,7 +27,7 @@ export const RACE_ABILITIES = [
 
 export const RACE_ABILITIES_BY_ID = Object.fromEntries(RACE_ABILITIES.map((a) => [a.id, a]));
 
-const DRAIN_ABILITY = { mouth: 'drainMouth', bust: 'drainBust', hip: 'drainHip', foot: 'drainFoot' };
+const DRAIN_ABILITY = { mouth: 'drainMouth', bust: 'drainBust', hip: 'drainHip', foot: 'drainFoot', hand: 'drainHand' };
 
 // 属性 → その吸収系の能力ID
 export function drainAbilityId(attr) {
@@ -36,5 +38,6 @@ export function drainAbilityId(attr) {
 export function isAbilityAvailable(ability, enemyDef) {
   if (!ability.attrs) return true;
   if (enemyDef.attr === 'all') return true;
-  return ability.attrs.includes(enemyDef.attr);
+  const attrs = enemyDef.sourceAttrs ?? [enemyDef.attr];
+  return ability.attrs.some((a) => attrs.includes(a));
 }

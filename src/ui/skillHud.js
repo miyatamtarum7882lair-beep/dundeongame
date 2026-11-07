@@ -30,8 +30,9 @@ export class SkillHud {
     this.banner = nextBanner(this.banner, info);
   }
 
-  flash({ x, y, attr, sec }) {
-    this.flashState = { x, y, attr, sec, age: 0 };
+  // color があれば、属性の色より優先する（敵のテーマ色）
+  flash({ x, y, attr, color = null, sec }) {
+    this.flashState = { x, y, attr, color, sec, age: 0 };
   }
 
   update(dtSec) {
@@ -55,7 +56,7 @@ export class SkillHud {
     if (level <= 0.003) return;
     const c = this.cfg.flash;
     const { logicalWidth: lw, logicalHeight: lh } = this.render;
-    const [r, gr, b] = hexRgb(ATTRS[f.attr]?.color ?? '#ffffff');
+    const [r, gr, b] = hexRgb(f.color ?? ATTRS[f.attr]?.color ?? '#ffffff');
     const s = this.toScreen(f.x, f.y);
     g.save();
     const grad = g.createRadialGradient(s.x, s.y, 0, s.x, s.y, c.radiusPx);
@@ -79,7 +80,7 @@ export class SkillHud {
     const alpha = bannerAlpha(b.age, b.holdSec, c.fadeInSec, c.fadeOutSec);
     if (alpha <= 0.003) return;
     const { logicalWidth: lw } = this.render;
-    const color = ATTRS[b.attr]?.color ?? '#ffffff';
+    const color = b.color ?? ATTRS[b.attr]?.color ?? '#ffffff';
 
     g.save();
     g.globalAlpha = alpha;

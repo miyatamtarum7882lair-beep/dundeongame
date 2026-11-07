@@ -1,4 +1,4 @@
-import { charmCrop, charmAlphaAt } from './boundCharmMath.js';
+import { charmCrop, charmAlphaAt, drawCrop } from './boundCharmMath.js';
 
 const MAX_CACHED_PER_IMAGE = 16;
 const cache = new WeakMap();
@@ -10,7 +10,7 @@ function imageSize(img) {
 /** 切り出し画像と外縁の透過マスクを合成したキャンバスを返す。 */
 export function buildCharmCanvas(img, point, cfg, side = 'front') {
   const horizontal = side === 'front' || side === 'back';
-  const key = [point.cx, point.cy, point.zoom, cfg.outputPx, cfg.centerTransparency, cfg.innerRatio, horizontal].join('|');
+  const key = [point.cx, point.cy, point.zoom, cfg.outputPx, cfg.centerTransparency, cfg.innerRatio, cfg.edgeSharpness, horizontal].join('|');
   let perImage = cache.get(img);
   if (!perImage) {
     perImage = new Map();
@@ -28,7 +28,7 @@ export function buildCharmCanvas(img, point, cfg, side = 'front') {
   const crop = charmCrop(w, h, point, cfg);
   g.imageSmoothingEnabled = true;
   g.imageSmoothingQuality = 'high';
-  g.drawImage(img, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, size, size);
+  drawCrop(g, img, w, h, crop, 0, 0, size, size);
 
   g.globalCompositeOperation = 'destination-in';
   const ovalX = horizontal ? 1 : 0.72;
@@ -36,7 +36,7 @@ export function buildCharmCanvas(img, point, cfg, side = 'front') {
   g.translate(size / 2, size / 2);
   g.scale(ovalX, ovalY);
   const grad = g.createRadialGradient(0, 0, 0, 0, 0, size / 2);
-  const steps = 16;
+  const steps = 24;
   for (let i = 0; i <= steps; i += 1) {
     const t = i / steps;
     grad.addColorStop(t, `rgba(0,0,0,${charmAlphaAt(t, cfg).toFixed(4)})`);

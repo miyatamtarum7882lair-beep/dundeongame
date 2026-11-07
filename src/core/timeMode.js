@@ -25,7 +25,7 @@ export class TimeMode extends Emitter {
       return false;
     }
     this.mode = 'BOUND';
-    this.bound = { elapsed: 0, secAcc: 0, tickAcc: 0, ticks: 0 };
+    this.bound = { elapsed: 0, secAcc: 0, tickAcc: 0, ticks: 0, moveAcc: 0 };
     this.emit('change', 'BOUND');
     return true;
   }
@@ -83,6 +83,13 @@ export class TimeMode extends Emitter {
     while (this.mode === 'BOUND' && b.secAcc >= 1) {
       b.secAcc -= 1;
       this.emit('boundSecond');   // MP吸収と脱出ゲージの処理（毎秒）
+    }
+
+    // 拘束中、まわりの敵は moveSec ごとに動く（拘束に加わりに来る）。ターンの経過とは別
+    b.moveAcc += dtSec;
+    while (this.mode === 'BOUND' && b.moveAcc >= this.B.bound.moveSec) {
+      b.moveAcc -= this.B.bound.moveSec;
+      this.emit('boundMove');
     }
 
     b.tickAcc += dtSec;

@@ -9,7 +9,7 @@ import { joinEffectFor } from '../data/flashbackData.js';
 import { RACE_ABILITIES_BY_ID, drainAbilityId } from '../data/raceAbilities.js';
 import { canStep, chebyshev } from '../dungeon/gridMath.js';
 import {
-  applyLearning, pickWeighted, getMarkScore, getRememberedSkill, recordDefeat, recordMarkEvent
+  applyLearning, pickWeighted, getMarkScore, getRememberedSkill, recordDefeat, recordMarkEvent, recordSkillSeen
 } from './learning.js';
 import { addAbilityProgress, getAbilityLevel } from './raceGrowth.js';
 import { getSoftness, softnessEffects, touchChanceAddFor, bindersSoftness } from './softness.js';
@@ -22,9 +22,19 @@ import { enemyExpNeeded } from './enemyStats.js';
 import { SkillDirector, normalizeStage, cuesFor } from './skillStage.js';
 import { STAGE_FX } from './stageFx.js';
 import { SKILL_STAGES } from '../data/skillStages.js';
-import { choiceFor, speechFor } from '../data/enemyDialogue.js';
+import { choiceFor, speechFor, windupLineFor, sceneLineFor, familiarLineFor, climaxVoiceFor } from '../data/enemyDialogue.js';
+import { ENEMY_HINTS, GENERAL_HINTS } from '../data/enemyHints.js';
 import { FlashbackController } from './flashback.js';
 import { FLASHBACK_STRONG } from '../data/flashbackRules.js';
+import { HeroConditions } from './conditioning.js';
+import { CONDITIONS, STATUSES, PERMANENT_STAGE_NAMES } from '../data/conditioning.js';
+import { isEvolved, recordChoice, recordEvoProgress, learnAdvanced } from './skillEvolution.js';
+import { themeOf, RESIST_COLORS } from '../data/enemyThemes.js';
+import { formationFor } from '../data/bindFormations.js';
+import { bindSideOf } from '../ui/boundCharmMath.js';
+import { charmAttrsOf } from '../data/charmAttrs.js';
+import { PairBonds, uniteNameOf, rubAttrsOf, partnerReady } from './pairBond.js';
+import { Economy } from './economy.js';
 
 const WEAPON_NAMES = { sword: '剣', fist: '拳' };
 const ALLY_NAMES = { priest: '僧侶', mage: '魔法使い' };
@@ -89,6 +99,9 @@ export class Combat extends Emitter {
       emit: (name, payload) => this.emit(name, payload),
       isBlocked: () => this.climax.isClimax() || this.climax.isAfterglow()
     });
+    this.conditions = new HeroConditions(this.B, () => this.save);
+    this.bonds = new PairBonds(this);
+    this.eco = new Economy(this);
     this.director = new SkillDirector({
       maxDt: this.B.stage.maxDt,
       onStart: (perf) => this.onStageStart(perf),
@@ -131,19 +144,75 @@ export class Combat extends Emitter {
     return !attr || attr === 'all' ? fallback : attr;
   }
 
+  theme(unit) {
+    return themeOf(unit?.speciesId);
+  }
+
+  // 永続化の判定で「別の遭遇」とみなす区切り（ラン・階ごと）
+  floorKey() {
+    const r = this.save.currentRun;
+    return `${this.p.runCount}:${r.seed}:${r.floor}`;
+  }
+
   offerChoice(enemy, skillId, continueSkill) {
     const choice = choiceFor(enemy.speciesId, skillId);
     if (!choice || this.choice) return false;
-    this.choice = { enemy, skillId, continueSkill };
+    // 同じ敵の選択肢は、数ターン空ける（v6 ルール9）
+    if ((enemy.choiceCooldown ?? 0) > 0) return false;
+    enemy.choiceCooldown = this.B.temptation.cooldownTurns;
+    // 技名 → 敵の誘惑 → 選択肢の画面、の順に見せる。前置きの間も this.choice があるので、他の敵は待つ
+    const active = {
+      enemy, skillId, continueSkill, prelude: true,
+      info: {
+        enemyId: enemy.speciesId,
+        name: enemy.name,
+        skillName: this.skillLabel(skillId, enemy),
+        choice,
+        theme: this.theme(enemy)
+      }
+    };
+    this.choice = active;
     this.actedThisTurn = true;
-    this.emit('log', 'enemySpeak', { name: enemy.name, line: choice.intro });
-    this.emit('enemyChoiceStart', {
-      enemyId: enemy.speciesId,
-      name: enemy.name,
-      skillName: this.skillLabel(skillId),
-      choice
+    const sec = this.B.temptation.preludeSec;
+    this.director.start({
+      stage: normalizeStage({ flashSec: 0, durationSec: sec, hits: { count: 1, startSec: sec - 0.05 }, fx: [], se: [] }, 'special', this.B.stage),
+      payload: { prelude: true, e: enemy, skillId, active }
     });
     return true;
+  }
+
+  // 選択肢の前置き：技名を出し、敵が誘惑してくる
+  startChoicePrelude({ e, skillId, active }) {
+    const def = SKILL_DEFS[skillId];
+    const hero = this.exp.hero;
+    const theme = this.theme(e);
+    const sec = this.B.temptation.preludeSec;
+    const eb = this.body(e);
+    const hb = this.body(hero);
+    e.setDir(hero.tx - e.tx, hero.ty - e.ty);
+    this.emit('anim', { unit: e, tag: def.motion ?? 'skill_sexyPose' });
+    this.emit('skillName', { key: skillId, title: active.info.skillName, sub: e.name, attr: def.attr ?? this.attrOf(e.speciesId), color: theme.main, holdSec: sec + 0.3 });
+    this.emit('skillFlash', { x: eb.x, y: eb.y, attr: def.attr, color: theme.main, sec: 0.35 });
+    this.emit('se', { id: 'warning', tx: e.tx, ty: e.ty });
+    this.emit('se', { id: 'temptPrelude', tx: e.tx, ty: e.ty, delay: 0.45 });
+    this.fx({ type: 'glyph', x: eb.x, y: eb.y + 42, style: 'heart', color: theme.main, sub: theme.glow, r: 50, life: sec + 0.2 });
+    this.fx({ type: 'swirl', x: eb.x, y: eb.y - 10, shapes: ['heart', 'heartLine'], colors: [theme.main, theme.glow], count: 12,
+      r0: 20, r1: 70, turns: 0.8, rise: 20, life: 0.9, size: [5, 8] });
+    this.fx({ type: 'flow', delay: 0.5, from: this.head(e), to: { x: hb.x, y: hb.y - 20 }, shapes: ['heart', 'heart', 'heartLine'],
+      colors: [theme.main, theme.glow], count: 12, life: 0.7, spanSec: 0.6, arc: 40, wobble: 14, size: [5, 9], glow: true });
+    this.fx({ type: 'swirl', delay: 0.9, x: hb.x, y: hb.y - 10, shape: 'heart', colors: [theme.main, theme.glow], count: 14,
+      r0: 100, r1: 24, turns: 1.2, life: sec - 0.8, size: [5, 9] });
+    this.fx({ type: 'wash', delay: 0.4, color: theme.main, alpha: 0.24, life: sec, inSec: 0.6 });
+    const head = this.head(e);
+    this.fx({ type: 'bubble', delay: 0.3, x: head.x, y: head.y - 30, text: active.info.choice.intro, color: theme.main, life: sec });
+    this.emit('log', 'enemySpeak', { name: e.name, line: active.info.choice.intro });
+  }
+
+  // 前置きが終わったら、選択肢の画面を出す（その間に決着していなければ）
+  endChoicePrelude({ active }) {
+    if (this.choice !== active || !active.prelude) return;
+    active.prelude = false;
+    this.emit('enemyChoiceStart', active.info);
   }
 
   dodgeChoice(enemy) {
@@ -163,18 +232,33 @@ export class Combat extends Emitter {
     return true;
   }
 
+  // 選択肢の結果。自発的受容と時間切れは別々に数える（v6 ルール6・8）
   resolveChoice(answer) {
     const active = this.choice;
     if (!active) return false;
     this.choice = null;
     this.emit('enemyChoiceEnd');
-    if (answer === 'resist' && this.dodgeChoice(active.enemy)) return true;
-    if (answer === 'resist') this.emit('log', 'choiceBlocked', { name: active.enemy.name });
+    const { enemy, skillId } = active;
+    const def = SKILL_DEFS[skillId];
+    this.handleEvents(recordChoice(this.p, enemy.speciesId, skillId, answer, this.B), enemy, skillId);
+    if (answer === 'accept') this.p.stats.acceptCount = (this.p.stats.acceptCount ?? 0) + 1;
+    else if (answer === 'timeout') this.p.stats.timeoutCount = (this.p.stats.timeoutCount ?? 0) + 1;
+    if (answer === 'resist' && def?.cond) {
+      this.handleEvents(this.conditions.recordResist(def.cond.id), enemy, skillId);
+    }
+    // 固有の断り方を持たない技（拘束など）は、従来どおり横へ避ける
+    if (answer === 'resist' && !def?.resist) {
+      if (this.dodgeChoice(enemy)) return true;
+      this.emit('log', 'choiceBlocked', { name: enemy.name });
+    }
     const drainMul = answer === 'timeout' ? this.B.temptation.timeoutDrainMul
       : answer === 'accept' ? this.B.temptation.acceptDrainMul : 1;
-    if (answer === 'timeout') this.emit('log', 'choiceTimeout', { name: active.enemy.name });
-    else if (answer === 'accept') this.emit('log', 'choiceAccepted', { name: active.enemy.name });
+    if (answer === 'timeout') this.emit('log', 'choiceTimeout', { name: enemy.name });
+    else if (answer === 'accept') this.emit('log', 'choiceAccepted', { name: enemy.name });
+    if (answer !== 'resist') this.emit('se', { id: 'temptAccept', tx: enemy.tx, ty: enemy.ty, gain: 0.7 });
     active.continueSkill({ answer, drainMul });
+    // 誘惑に乗ると、その子の「贈り物」を無理やり着けさせられることがある
+    if (answer !== 'resist') this.eco.rollGift(enemy, def?.attr ?? this.attrOf(enemy.speciesId), answer);
     return true;
   }
 
@@ -192,11 +276,14 @@ export class Combat extends Emitter {
     this.stunTurns = 0;
     this.guarding = false;
     this.bound = null;
+    this.emit('bindFormation', { formation: null });
     this.escapeInvulnTurns = 0;
     this.buffs.restore(this.save.currentRun.buffs ?? []);
     this.climax.restore({ afterglowTurns: this.save.currentRun.afterglowTurns ?? 0 });
     this.flashback.cancel();
     this.flashback.syncFloor();
+    this.conditions.onFloorStart();
+    this.bonds.reset();
   }
 
   beginTurn() {
@@ -235,6 +322,7 @@ export class Combat extends Emitter {
     const rate = rollRate(B.battle.rate[weapon] * (1 - cut), W.minRate, W.maxRate, hs.level - enemy.level, B);
     const dmg = calcDamage(enemy.maxHp, rate);
     enemy.hp = Math.max(0, enemy.hp - dmg);
+    this.bonds.interrupt(enemy);
 
     this.actedThisTurn = true;
     const d = this.nextDelay();
@@ -288,6 +376,7 @@ export class Combat extends Emitter {
     if (stage > th.stage) {
       th.stage = stage;
       this.emit('log', 'touchHabitUp', { stage });
+      this.deepenDebuff('touch', '接触の記憶');
     }
 
     this.abilityEvents(addAbilityProgress(p, enemy.speciesId, 'weaknessLearn', B, { pts: 1, grownThisBattle: this.grown }));
@@ -314,8 +403,9 @@ export class Combat extends Emitter {
     const { B } = this;
     const hs = this.hs;
     const hero = this.exp.hero;
-    const exp = expReward(enemy.level, B);
+    const exp = Math.round(expReward(enemy.level, B) * this.eco.expRewardMul());
     hs.exp += exp;
+    this.eco.killReward(enemy);
 
     this.emit('learning', recordMarkEvent(this.p, enemy.speciesId, 'kill', B));
     const b = this.body(enemy);
@@ -326,7 +416,13 @@ export class Combat extends Emitter {
     while (hs.exp >= expNeeded(hs.level, B)) {
       hs.exp -= expNeeded(hs.level, B);
       hs.level += 1;
-      hs.maxHp += B.battle.levelUp.hp;
+      this.runStats();
+      // 最大HPは、そのランで初めて届いたレベルのときだけ増える（レベルダウンでは減らないため）
+      hs.hpLevel = Math.max(hs.hpLevel ?? hs.level - 1, hs.level - 1);
+      if (hs.level > hs.hpLevel) {
+        hs.maxHp += B.battle.levelUp.hp;
+        hs.hpLevel = hs.level;
+      }
       hs.maxMp += B.battle.levelUp.mp;
       hs.hp = Math.min(hs.maxHp, hs.hp + Math.round(hs.maxHp * B.battle.levelUp.healRate));
       this.emit('log', 'heroLevelUp', { level: hs.level });
@@ -354,6 +450,13 @@ export class Combat extends Emitter {
       return null;
     }
 
+    // 絆を結んだ相方が近くにいれば、二人でユナイト攻撃
+    const unitePartner = this.unitePartnerFor(e, dist);
+    if (unitePartner) {
+      this.uniteAttack(e, unitePartner);
+      return null;
+    }
+
     if (dist <= 1) {
       const normalSkill = def.normalSkill ?? 'normalAttack';
       actions.push({ id: normalSkill, category: 'attack', skillId: normalSkill, weight: W.attack });
@@ -366,6 +469,8 @@ export class Combat extends Emitter {
     } else {
       actions.push({ id: 'move', category: 'move', weight: W.move });
     }
+    // 何もしない（様子見）。行動を1回むだにする代わりに、主人公をからかう
+    if (dist <= 1 || sees) actions.push({ id: 'idle', category: 'idle', weight: W.idle ?? 0 });
 
     const skillIds = [...def.skills];
     if (e.advancedSkillUnlocked && e.advancedSkill) skillIds.push(e.advancedSkill);
@@ -383,9 +488,18 @@ export class Combat extends Emitter {
       teasingPlayLv: getAbilityLevel(p, e.speciesId, 'teasingPlay'),
       rememberedSkillId: getRememberedSkill(p, e.speciesId)?.skillId ?? null
     };
-    const picked = pickWeighted(applyLearning(actions, ctx, B));
+    // 連携技（しっぽフェイント → ヒップアタックなど）は、次の行動で優先する
+    const combo = e.comboNext ? actions.find((a) => a.skillId === e.comboNext) : null;
+    e.comboNext = null;
+    const picked = combo && Math.random() < B.battle.comboChance
+      ? combo
+      : pickWeighted(applyLearning(actions, ctx, B));
     if (!picked) return null;
     if (picked.category === 'move') return 'move';
+    if (picked.category === 'idle') {
+      this.enemyIdle(e);
+      return null;
+    }
     if (picked.category === 'bind' && bindImmediately) {
       this.startBound(e, picked.skillId);
       return null;
@@ -398,6 +512,22 @@ export class Combat extends Emitter {
     return null;
   }
 
+  // 何もせずに様子を見る。ときどき、からかう台詞と小さなハートを出す
+  enemyIdle(e) {
+    const hero = this.exp.hero;
+    e.setDir(hero.tx - e.tx, hero.ty - e.ty);
+    this.actedThisTurn = true;
+    const theme = this.theme(e);
+    const h = this.head(e);
+    this.fx({ type: 'burst', x: h.x, y: h.y - 4, shape: 'heart', colors: [theme.main, theme.glow], count: 3,
+      speed: [20, 60], size: [4, 7], life: 0.9, gravity: -50 });
+    if (Math.random() < this.B.battle.idleTalkChance) {
+      const line = sceneLineFor(e.speciesId, 'idle');
+      if (line) this.speak(e, line);
+    }
+    this.emit('log', 'enemyIdle', { name: e.name });
+  }
+
   prepareSkill(e, skillId, ctx) {
     const def = SKILL_DEFS[skillId];
     const motion = def.category === 'bind' ? bindTag(this.exp.hero.tx - e.tx, this.exp.hero.ty - e.ty) : def.motion ?? 'skill_sexyPose';
@@ -407,10 +537,21 @@ export class Combat extends Emitter {
     this.actedThisTurn = true;
     this.emit('anim', { unit: e, tag: motion });
     this.emit('se', { id: def.windupSe ?? 'warning', tx: e.tx, ty: e.ty });
-    this.fx({ type: 'ring', x: target.x, y: target.y, r: 44, color: '#ff9ccf' });
-    this.fx({ type: 'sparks', x: target.x, y: target.y - 36, color: '#ff9ccf', count: 5 });
+    // 構え：敵へ光が集まり、狙われたマスに予告が出る
+    const theme = this.theme(e);
+    const eb = this.body(e);
+    this.fx({ type: 'ring', x: target.x, y: target.y, r: 44, color: theme.main, width: 5, alpha: 0.6 });
+    this.fx({ type: 'sparks', x: target.x, y: target.y - 36, color: theme.main, count: 5 });
+    this.fx({
+      type: 'swirl', x: eb.x, y: eb.y - 10, shapes: ['heart', 'heart', 'heartLine'], colors: [theme.main, theme.glow, theme.accent],
+      count: 12, r0: 80, r1: 8, turns: 1.2, life: 0.75, size: [4, 7], glow: true
+    });
+    this.fx({ type: 'tileMark', x: target.x, y: target.y + 42, color: theme.main, life: 1.0, alpha: 0.6 });
+    this.runCueList(e, SKILL_STAGES[skillId]?.windup, 'start', {});
+    const line = windupLineFor(e.speciesId, skillId);
+    if (line) this.speak(e, line);
     this.emitSkillName(e, skillId, 0.9);
-    this.emit('log', 'enemyWindup', { name: e.name, skill: this.skillLabel(skillId) });
+    this.emit('log', 'enemyWindup', { name: e.name, skill: this.skillLabel(skillId, e) });
     const stage = normalizeStage(SKILL_STAGES[skillId], def.category, this.B.stage);
     this.director.start({
       stage: {
@@ -421,8 +562,50 @@ export class Combat extends Emitter {
         fx: [],
         se: []
       },
-      payload: { e, skillId, def, attr: def.attr ?? this.attrOf(e.speciesId), ctx, skillName: this.skillLabel(skillId), windupOnly: true }
+      payload: { e, skillId, def, attr: def.attr ?? this.attrOf(e.speciesId), ctx, skillName: this.skillLabel(skillId, e), windupOnly: true }
     });
+  }
+
+  // 敵の台詞を、吹き出しとログに出す
+  speak(e, line, { bubble = true } = {}) {
+    if (!line) return;
+    const head = this.head(e);
+    if (bubble) this.fx({ type: 'bubble', x: head.x, y: head.y - 30, text: line, color: this.theme(e).main });
+    this.emit('log', 'enemySpeak', { name: e.name, line });
+  }
+
+  // 台本のキュー（at の指定は無視して全部）を、その場で流す
+  runCueList(e, list, at = 'start', flags = {}) {
+    if (!list?.length) return false;
+    const hero = this.exp.hero;
+    const context = {
+      hero: { body: this.body(hero), head: this.head(hero) },
+      enemy: { body: this.body(e), head: this.head(e) },
+      dir: { dx: Math.sign(e.tx - hero.tx), dy: Math.sign(e.ty - hero.ty) },
+      def: SKILL_DEFS[e.pendingSkill?.skillId] ?? {},
+      attr: null, index: 0, count: 1, progress: at === 'end' ? 1 : 0,
+      hpLoss: 0, mpLoss: 0, expLost: 0,
+      theme: this.theme(e)
+    };
+    for (const cue of list) {
+      if (!this.cueAllowed(cue, flags)) continue;
+      const build = STAGE_FX[cue.id];
+      if (!build) {
+        console.warn(`Unknown skill stage effect: ${cue.id}`);
+        continue;
+      }
+      for (const fx of build({ ...context, opts: cue })) {
+        this.fx({ ...fx, delay: (fx.delay ?? 0) + (cue.delay ?? 0) });
+      }
+    }
+    return true;
+  }
+
+  // when: 'accepted' / ['!resisted', 'evolved'] のような条件
+  cueAllowed(cue, flags) {
+    if (!cue.when) return true;
+    const list = Array.isArray(cue.when) ? cue.when : [cue.when];
+    return list.every((w) => (w.startsWith('!') ? !flags[w.slice(1)] : Boolean(flags[w])));
   }
 
   startBound(e, skillId, preFlashed = false, choiceResult = null) {
@@ -432,20 +615,21 @@ export class Combat extends Emitter {
     }
     if (this.bound) return this.addBoundBinder(e, skillId);
     if (!choiceResult && this.offerChoice(e, skillId, (result) => this.startBound(e, skillId, preFlashed, result))) return;
-    if (!choiceResult) this.emit('log', 'enemySpeak', { name: e.name, line: speechFor(e.speciesId, this.attrOf(e.speciesId)) });
+    // 拘束の台詞は、拘束の演出（大きな文字）と重なるので吹き出しは出さない
+    if (!choiceResult) this.speak(e, sceneLineFor(e.speciesId, 'bind') ?? speechFor(e.speciesId, this.attrOf(e.speciesId)), { bubble: !SKILL_STAGES[skillId]?.bind });
+    const bindAttr = SKILL_DEFS[skillId]?.attr ?? this.attrOf(e.speciesId);
     if (!preFlashed) {
-      const def = SKILL_DEFS[skillId];
-      const attr = def?.attr ?? this.attrOf(e.speciesId);
       this.emitSkillName(e, skillId, 0.9);
       const body = this.body(e);
       const flashSec = this.B.stage.defaults.special.flashSec;
-      this.emit('skillFlash', { x: body.x, y: body.y, attr, sec: flashSec });
+      this.emit('skillFlash', { x: body.x, y: body.y, attr: bindAttr, color: this.theme(e).main, sec: flashSec });
       if (this.save.settings.flashback !== 'off') this.emit('se', { id: 'skillFlash', tx: e.tx, ty: e.ty });
     }
     const dx = e.tx - this.exp.hero.tx;
     const dy = e.ty - this.exp.hero.ty;
     const heroDir = this.exp.hero.dir;
-    const isBackBind = dx * heroDir.dx + dy * heroDir.dy < 0;
+    // 体勢崩し中は、尻の拘束が背面からになる
+    const isBackBind = dx * heroDir.dx + dy * heroDir.dy < 0 || this.conditions.backBind(bindAttr);
     this.bound = {
       binders: [],
       isBackBind,
@@ -459,7 +643,16 @@ export class Combat extends Emitter {
       choiceDrainMul: choiceResult?.drainMul ?? 1
     };
     this.addBoundBinder(e, skillId, false);
+    recordSkillSeen(this.p, e.speciesId, skillId);
     this.bound.requiredClicks = this.getRequiredClicks();
+    // 選択肢付きの拘束を受け入れたら、その敵の蓄積デバフが進む
+    const bindDef = SKILL_DEFS[skillId];
+    if (choiceResult && choiceResult.answer !== 'resist' && bindDef?.cond) {
+      const mulC = choiceResult.answer === 'timeout' ? this.B.temptation.timeoutCondMul : this.B.temptation.acceptCondMul;
+      this.handleEvents(this.conditions.gain(bindDef.cond.id, bindDef.cond.gain * mulC, {
+        floorKey: this.floorKey(), voluntary: choiceResult.answer === 'accept'
+      }), e, skillId);
+    }
     this.actedThisTurn = true;
     this.emit('anim', { unit: this.exp.hero, tag: 'bound' });
     this.emit('boundStart', { binder: e, skillId, isBackBind });
@@ -499,14 +692,83 @@ export class Combat extends Emitter {
         ty: e.ty,
         gain: effect?.gain ?? 1
       });
+      this.emit('se', { id: 'bindJoin', tx: e.tx, ty: e.ty });
+      this.joinEffect(e, bound.binders.length);
       this.bindEffect(e, skillId, false);
       this.emit('boundChanged', { binders: bound.binders.map((b) => b.unit) });
       this.climax.extend();
     }
+    this.updateFormation();
     return true;
   }
 
+  // 別の敵が拘束に加わったときの演出。人数が増えるほど派手になる
+  joinEffect(e, count) {
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    const hh = this.head(hero);
+    const theme = this.theme(e);
+    const k = Math.min(1, (count - 1) / 3);
+    this.fx({ type: 'flow', from: this.head(e), to: { x: hb.x, y: hb.y - 16 }, shapes: ['heart', 'heart', 'heartLine'],
+      colors: [theme.main, theme.glow, theme.accent], count: 14, life: 0.45, spanSec: 0.3, arc: 30, size: [6, 10], glow: true });
+    this.fx({ type: 'speedLines', delay: 0.15, x: hb.x, y: hb.y, color: theme.main, count: 40 + 20 * k, alpha: 0.5 });
+    this.fx({ type: 'flash', delay: 0.15, color: theme.main, alpha: 0.2 + 0.2 * k });
+    this.fx({ type: 'ring', delay: 0.15, x: hb.x, y: hb.y + 40, r: 90 + 30 * k, squash: 0.45, color: theme.main, width: 7, alpha: 0.75, life: 0.5 });
+    this.fx({ type: 'burst', delay: 0.18, x: hb.x, y: hb.y - 10, shapes: ['heart', 'heartLine'], colors: [theme.main, theme.glow, '#ff2d86'],
+      count: 16 + 14 * k, speed: [120, 300], size: [6, 12], life: 0.8, glow: true });
+    this.fx({ type: 'shake', delay: 0.15, power: 0.6 + 0.6 * k });
+    this.fx({ type: 'callout', delay: 0.2, x: hb.x, y: hh.y - 40, text: `追加拘束！ ×${count}`, color: theme.main, size: 30 + 8 * k, wobble: 0.1 });
+    this.fx({ type: 'callout', delay: 0.45, x: this.body(e).x, y: this.head(e).y - 30, text: `${e.name}も♡`, color: theme.glow, size: 20 });
+    this.emit('drainPulse', { strength: 1, delay: 0.15 });
+  }
+
+  // 主人公から見た、拘束している敵の向き
+  binderSides() {
+    const hero = this.exp.hero;
+    return (this.bound?.binders ?? []).map(({ unit }) => bindSideOf(unit.tx - hero.tx, unit.ty - hero.ty, hero.dir));
+  }
+
+  // 複数方向からの拘束の陣形を求め直す。新しく成立した陣形は演出で知らせる
+  updateFormation() {
+    const bound = this.bound;
+    if (!bound) return;
+    const before = new Set(bound.formation?.ids ?? []);
+    bound.formation = formationFor(this.binderSides());
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    const hh = this.head(hero);
+    bound.formation.active.forEach((f, i) => {
+      if (before.has(f.id)) return;
+      const d = 0.5 + i * 0.35;
+      this.emit('log', 'formationOn', { name: f.name, desc: f.desc });
+      this.emit('se', { id: 'formationOn', delay: d });
+      this.fx({ type: 'callout', delay: d, x: hb.x, y: hh.y - 80, text: `【${f.name}】`, color: f.color, size: 30, wobble: 0.06, life: 1.6 });
+      this.fx({ type: 'wash', delay: d, color: f.color, alpha: 0.3, life: 1.0 });
+      this.fx({ type: 'swirl', delay: d, x: hb.x, y: hb.y - 10, shapes: ['heart', 'heartLine'], colors: [f.color, '#ffd6ec'],
+        count: 16, r0: 130, r1: 30, turns: 1.2, life: 0.9, size: [6, 10], glow: true });
+      const sides = this.binderSides();
+      for (const [side, line] of Object.entries(f.lines ?? {})) {
+        const i = sides.indexOf(side);
+        if (i >= 0) this.later(d + 0.3, () => this.bound && this.speak(this.bound.binders[i]?.unit, line));
+      }
+      if (f.chorus) {
+        this.fx({ type: 'callout', delay: d + 0.6, x: hb.x, y: hh.y - 120, text: f.chorus, color: f.color, size: 34, wobble: 0.08, life: 2.0 });
+        this.emit('log', 'formationChorus', { line: f.chorus });
+      }
+    });
+    if (before.size !== bound.formation.ids.length || bound.formation.ids.some((id) => !before.has(id))) {
+      this.refreshBoundRequirement();
+    }
+    this.emit('bindFormation', { formation: bound.formation });
+  }
+
   bindEffect(e, skillId, pulse = false) {
+    // 台本に拘束の演出があれば、そちらを使う
+    const custom = SKILL_STAGES[skillId]?.bind?.[pulse ? 'pulse' : 'start'];
+    if (custom) {
+      this.runCueList(e, custom, pulse ? 'hit' : 'start', { evolved: isEvolved(this.p, e.speciesId, skillId) });
+      return;
+    }
     const hero = this.exp.hero;
     const body = this.body(hero);
     const head = this.head(hero);
@@ -540,17 +802,112 @@ export class Combat extends Emitter {
 
   tryUnite(e) {
     if (!this.bound || this.bound.binders.length >= this.B.bound.maxBinders) return false;
+    if (e.bonding) return false;
     const def = ENEMIES_BY_ID[e.speciesId];
     const skillId = def.bindSkills.find((id) => SKILL_DEFS[id]);
-    if (!skillId || Math.random() >= this.B.bound.uniteChance) return false;
-    return this.addBoundBinder(e, skillId);
+    // 絆を結んだ相方が拘束していれば、必ず息を合わせて加わる（ユナイト拘束）
+    const partner = e.bondPartner && this.bound.binders.find((b) => b.unit === e.bondPartner);
+    if (!skillId || (!partner && Math.random() >= this.B.bound.uniteChance)) return false;
+    const ok = this.addBoundBinder(e, skillId);
+    if (ok && partner) {
+      const me = this.bound.binders.find((b) => b.unit === e);
+      me.unite = true;
+      partner.unite = true;
+      this.uniteFlourish(partner.unit, e, true);
+    }
+    return ok;
+  }
+
+  // ---- ユナイト攻撃（絆を結んだ二人の連携）----
+  // 二人の見せ場の演出。bindJoin = 拘束中に相方が加わったとき
+  uniteFlourish(a, b, bindJoin = false) {
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    const hy = this.head(hero).y;
+    const ta = this.theme(a);
+    const tb = this.theme(b);
+    const name = uniteNameOf(a.bondAttrs ?? rubAttrsOf(a.speciesId, b.speciesId));
+    this.emit('skillName', { key: `unite:${a.id}:${b.id}`, title: `ユナイト：${name}`, sub: `${a.name} × ${b.name}`, attr: (a.bondAttrs ?? [])[0], color: ta.main, holdSec: 1.2 });
+    this.emit('se', { id: 'uniteStrike', tx: a.tx, ty: a.ty });
+    for (const [u, th] of [[a, ta], [b, tb]]) {
+      const ub = this.body(u);
+      this.fx({ type: 'glyph', x: ub.x, y: ub.y + 42, style: 'heart', color: th.main, sub: th.glow, r: 48, life: 1.2, spin: 2 });
+      this.fx({ type: 'flow', delay: 0.15, from: this.head(u), to: { x: hb.x, y: hb.y - 20 }, shapes: ['heart', 'heartLine'],
+        colors: [th.main, th.glow, '#ffd6ec'], count: 16, life: 0.5, spanSec: 0.3, arc: 40, size: [6, 11], glow: true });
+    }
+    this.fx({ type: 'swirl', delay: 0.4, x: hb.x, y: hb.y - 20, shapes: ['heart', 'heart', 'heartLine'], colors: [ta.main, tb.main, '#ffd6ec'],
+      count: 22, r0: 140, r1: 20, turns: 1.5, life: 0.9, size: [7, 12], glow: true });
+    this.fx({ type: 'flash', delay: 0.45, color: ta.main, alpha: 0.35 });
+    this.fx({ type: 'shake', delay: 0.45, power: 1.1 });
+    this.fx({ type: 'callout', delay: 0.1, x: hb.x, y: hy - 90, text: 'せーのっ♡', color: tb.main, size: 30, wobble: 0.1, life: 1.2 });
+    this.fx({ type: 'callout', delay: 0.5, x: hb.x, y: hy - 50, text: bindJoin ? 'ユナイト拘束♡' : `${name}♡`, color: ta.main, size: 34, wobble: 0.08, life: 1.6 });
+    this.emit('drainPulse', { strength: 1, delay: 0.45 });
+  }
+
+  // 二人同時の攻撃：大きく吸い、二人ぶんの蓄積デバフを進め、そのまま二人がかりで拘束する
+  uniteAttack(a, b) {
+    const { B, hs } = this;
+    const U = B.unite;
+    this.actedThisTurn = true;
+    a.uniteReadyTurn = this.exp.turnCount + U.cooldownTurns;
+    b.uniteReadyTurn = a.uniteReadyTurn;
+    this.uniteFlourish(a, b);
+    this.emit('log', 'uniteAttack', { a: a.name, b: b.name, skill: uniteNameOf(a.bondAttrs ?? rubAttrsOf(a.speciesId, b.speciesId)) });
+    this.later(0.55, () => {
+      if (this.defeated) return;
+      const scale = this.climax.drainScale() * this.buffs.mult('drainTaken') * this.conditions.mult('drainTaken')
+        * (a.bondPower ?? 1) * (b.bondPower ?? 1);
+      const mp = Math.min(hs.mp, Math.round(hs.maxMp * U.mpRate * scale));
+      hs.mp -= mp;
+      const res = this.drainHeroExp(U.expRate * scale);
+      const hb = this.body(this.exp.hero);
+      const hy = this.head(this.exp.hero).y;
+      if (mp > 0) this.fx({ type: 'damage', x: hb.x, y: hy - 26, text: `MP -${mp}`, style: 'mp', big: true });
+      if (res.lost > 0) this.fx({ type: 'damage', x: hb.x, y: hy - 56, text: `EXP -${res.lost}`, style: 'exp', big: true });
+      for (const u of [a, b]) {
+        this.gainDrainExperience(u, (mp + res.lost) / 2);
+        const condId = Object.keys(CONDITIONS).find((id) => CONDITIONS[id].source === u.speciesId);
+        if (condId) this.handleEvents(this.conditions.gain(condId, U.condGain, { floorKey: this.floorKey() }), u, null);
+      }
+      if (hs.mp === 0) this.emit('log', 'mpEmpty', {});
+      this.emit('persist');
+    });
+    // 続けて、二人がかりで拘束する
+    this.later(1.2, () => {
+      if (this.defeated || this.bound || this.climax.blocksBinding()) return;
+      if (!this.exp.units.includes(a) || !this.exp.units.includes(b)) return;
+      const bindA = ENEMIES_BY_ID[a.speciesId]?.bindSkills.find((id) => SKILL_DEFS[id]);
+      const bindB = ENEMIES_BY_ID[b.speciesId]?.bindSkills.find((id) => SKILL_DEFS[id]);
+      if (!bindA || !bindB) return;
+      const hero = this.exp.hero;
+      if (chebyshev(b.tx, b.ty, hero.tx, hero.ty) > 1) this.exp.stepToward?.(b);
+      this.startBound(a, bindA, true, { answer: 'unite', drainMul: U.bindDrainMul });
+      if (!this.bound) return;
+      this.bound.binders[0].unite = true;
+      if (chebyshev(b.tx, b.ty, hero.tx, hero.ty) <= 1 && this.addBoundBinder(b, bindB)) {
+        const me = this.bound.binders.find((x) => x.unit === b);
+        if (me) me.unite = true;
+      }
+    });
+  }
+
+  // この敵が、いまユナイト攻撃できる相方
+  unitePartnerFor(e, dist) {
+    const U = this.B.unite;
+    if (dist > 1 || this.bound || this.climax.blocksBinding()) return null;
+    if ((e.uniteReadyTurn ?? 0) > this.exp.turnCount) return null;
+    const p = partnerReady(e, this.exp.units);
+    if (!p || p.bonding || p.stunTurns > 0) return null;
+    const hero = this.exp.hero;
+    if (chebyshev(p.tx, p.ty, hero.tx, hero.ty) > U.partnerRange) return null;
+    return Math.random() < U.chance ? p : null;
   }
 
   getRequiredClicks() {
     const bound = this.bound;
     const binders = bound.binders;
     const first = binders[0];
-    const res = this.p.resistances[first.attr] ?? 0;
+    const res = this.eco.resistanceOf(first.attr);
     const softness = bindersSoftness(
       binders.map(({ unit, attr }) => ({ raceId: unit.speciesId, attr })),
       this.B
@@ -568,7 +925,11 @@ export class Combat extends Emitter {
       softEscapeMul: softness.escapeMul,
       isBackBind: bound.isBackBind
     }, this.B);
-    return Math.max(1, Math.round(base * this.buffs.mult('escapeNeed')));
+    // 一時状態（油断・誘惑受容など）と、発症中の蓄積デバフで脱出しにくくなる
+    const condMul = this.conditions.mult('escapeNeed') * this.conditions.boost(first.unit.speciesId, 'escape')
+      * (bound.formation?.escape ?? 1)
+      * Math.max(...binders.map((b) => this.eco.escapeMulFrom(b.unit.speciesId)));   // 贈り物の呪い
+    return Math.max(1, Math.round(base * this.buffs.mult('escapeNeed') * condMul));
   }
 
   struggle() {
@@ -578,7 +939,8 @@ export class Combat extends Emitter {
     bound.idleSec = 0;
     bound.surrenderRate = Math.max(0, bound.surrenderRate - 0.01);
     this.refreshBoundRequirement();
-    bound.escapeProgress = Math.min(bound.requiredClicks, bound.escapeProgress + 1);
+    // 集中力低下などで、もがき1回の効きが落ちる
+    bound.escapeProgress = Math.min(bound.requiredClicks, bound.escapeProgress + this.conditions.mult('struggle'));
     this.emit('se', { id: 'tick', tx: this.exp.hero.tx, ty: this.exp.hero.ty });
     this.fx({ type: 'ring', x: this.body(this.exp.hero).x, y: this.body(this.exp.hero).y, r: 36 });
     if (bound.escapeProgress >= bound.requiredClicks) this.escapeBound();
@@ -588,12 +950,20 @@ export class Combat extends Emitter {
   // 主人公のEXPを失う。足りなければレベルが下がる
   drainHeroExp(rate) {
     const { B, hs } = this;
+    rate *= this.conditions.mult('expTaken');   // 弱点看破などで、経験値が吸われやすくなる
     const amount = Math.max(1, Math.round(expNeeded(hs.level, B) * rate));
+    this.runStats();   // 吸われる前のレベルを、このランの最高レベルとして記録しておく
     const res = loseHeroExp(hs, amount, {
       needFn: (lv) => expNeeded(lv, B),
       levelUp: B.battle.levelUp,
-      minLevel: B.bound.expDrainMinLevel
+      minLevel: B.bound.expDrainMinLevel,
+      keepHp: true
     });
+    if (res.lost > 0) {
+      const rs = this.runStats();
+      rs.expLost += res.lost;
+      this.emit('heroExpDrained', { amount: res.lost, levelsLost: res.levelsLost, level: hs.level });
+    }
     if (res.levelsLost > 0) {
       const hb = this.body(this.exp.hero);
       this.fx({
@@ -635,6 +1005,13 @@ export class Combat extends Emitter {
       });
     }
     for (const { unit, skillId } of bound.binders) this.bindEffect(unit, skillId, true);
+    // 拘束役が、絶頂に合わせて囁く（性格で言い方が違う）
+    const voice = bound.binders[Math.floor(Math.random() * bound.binders.length)]?.unit;
+    if (voice) {
+      const hb2 = this.body(this.exp.hero);
+      this.fx({ type: 'callout', x: hb2.x + (Math.random() - 0.5) * 120, y: this.head(this.exp.hero).y - 20 - Math.random() * 50,
+        text: climaxVoiceFor(voice.speciesId), color: this.theme(voice).main, size: 24 + 10 * progress, wobble: 0.1, life: 1.2 });
+    }
     this.fx({ type: 'shake', power: 0.6 + 0.8 * progress });
     this.emit('drainPulse', { strength: 0.6 });
     this.emit('persist');
@@ -652,8 +1029,20 @@ export class Combat extends Emitter {
     const hero = this.exp.hero;
     const hb = this.body(hero);
     if (name === 'climaxStart') {
+      this.onFinish();
+      this.p.stats.climaxCount = (this.p.stats.climaxCount ?? 0) + 1;
+      this.runStats().climaxes += 1;
+      const lead = this.bound?.binders[0]?.unit;
+      if (lead) {
+        const line = sceneLineFor(lead.speciesId, 'climaxStart');
+        this.speak(lead, line);
+        this.fx({ type: 'callout', delay: 0.4, x: hb.x, y: this.head(hero).y - 70, text: line.length > 14 ? 'イけ♡' : line,
+          color: this.theme(lead).main, size: 40, wobble: 0.12, life: 1.6 });
+      }
       const first = this.bound?.binders[0]?.unit;
       this.flashback?.cancel();
+      // 絶頂の音（wav）を、0.5秒ずらして2回重ねる
+      for (const delay of this.B.climaxSe.delays) this.emit('se', { id: 'climaxBurst', delay, exact: true });
       this.emit('se', {
         id: 'climaxStart',
         tx: first?.tx ?? hero.tx,
@@ -677,6 +1066,7 @@ export class Combat extends Emitter {
         });
       }
       this.emit('log', 'climaxStart', { hpLoss: payload.hpLoss ?? 0 });
+      this.climaxStartDrain(payload.count ?? 1);
     } else if (name === 'climaxRelease') {
       const first = this.bound?.binders[0];
       this.emit('se', { id: 'climaxPulse', tx: first?.unit.tx ?? hero.tx, ty: first?.unit.ty ?? hero.ty, gain: 1.15 });
@@ -699,6 +1089,145 @@ export class Combat extends Emitter {
     }
   }
 
+  // 絶頂の瞬間に、まとめて大きく吸い上げる。拘束役が多いほど、絶頂を重ねているほど多い
+  climaxStartDrain(count) {
+    const { B } = this;
+    const bound = this.bound;
+    if (!bound?.binders.length) return;
+    if (this.eco.consumeAmulet()) return;   // 身代わりのお守り
+    const C = B.climax.startDrain;
+    const n = bound.binders.length;
+    const rate = C.expRate * (1 + C.perBinder * (n - 1)) * (1 + Math.min(C.countCap, C.perCount * (count - 1)))
+      * this.buffs.mult('drainTaken') * (bound.choiceDrainMul ?? 1);
+    const res = this.drainHeroExp(rate);
+    if (!(res.lost > 0)) return;
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    const hy = this.head(hero).y;
+    for (const [i, { unit }] of bound.binders.entries()) {
+      const share = res.lost * B.bound.expShareRate * C.shareMul / n;
+      this.later(0.25 + i * 0.12, () => this.gainDrainExperience(unit, share));
+      const th = this.theme(unit);
+      const eb = this.body(unit);
+      this.fx({ type: 'flow', delay: 0.2 + i * 0.12, from: { x: hb.x, y: hb.y - 20 }, to: { x: eb.x, y: this.head(unit).y + 20 },
+        shapes: ['heart', 'dot', 'heart'], colors: ['#b85cff', th.main, '#ffd6ec'], count: 26, size: [5, 10], life: 0.9, spread: 26, glow: true });
+      this.fx({ type: 'ring', delay: 0.9 + i * 0.12, x: eb.x, y: eb.y, r: 70, color: th.main, width: 6, alpha: 0.8, life: 0.5 });
+    }
+    this.fx({ type: 'wash', color: '#9b3dff', alpha: 0.28, mode: 'full', life: 1.3, inSec: 0.15 });
+    this.fx({ type: 'burst', delay: 0.1, x: hb.x, y: hy, shapes: ['heart', 'heartLine', 'dot'], colors: ['#b85cff', '#ff4fa3', '#ffd6ec'],
+      count: 34, speed: [160, 360], size: [6, 13], life: 1.1, gravity: 80, glow: true });
+    this.fx({ type: 'damage', delay: 0.35, x: hb.x, y: hy - 70, text: `EXP -${res.lost}`, style: 'exp', big: true });
+    this.emit('se', { id: 'expDrained', delay: 0.2, gain: 1.3 });
+    this.emit('se', { id: 'levelDown', delay: 0.55, gain: res.levelsLost > 0 ? 1 : 0.5 });
+    this.emit('log', 'climaxStartDrain', { amount: res.lost });
+  }
+
+  // MP0 フィニッシュ。拘束技の進化（finish）と、指定技による上位技の永続習得
+  onFinish() {
+    for (const { unit, skillId } of this.bound?.binders ?? []) {
+      const raceId = unit.speciesId;
+      this.handleEvents(recordEvoProgress(this.p, raceId, skillId, SKILL_DEFS[skillId], 'finish'), unit, skillId);
+      const advanced = ENEMIES_BY_ID[raceId]?.advancedSkill;
+      if (!advanced || SKILL_DEFS[advanced]?.advancedFrom !== skillId) continue;
+      if (!learnAdvanced(this.p, raceId, advanced)) continue;
+      for (const u of this.exp.units) {
+        if (u.kind === 'enemy' && u.speciesId === raceId) u.advancedSkillUnlocked = true;
+      }
+      this.emit('log', 'advancedLearned', { name: unit.name, skill: this.skillLabel(advanced) });
+      this.emit('se', { id: 'skillEvolve', tx: unit.tx, ty: unit.ty });
+      this.celebrateEnemy(unit, '上位技 習得');
+    }
+    this.emit('persist');
+  }
+
+  // 永続デバフが深まった。画面と永続デバフの欄で知らせる（id は debuffPanel の collectDebuffs と同じ）
+  deepenDebuff(id, label) {
+    this.emit('debuffDeepen', { id, label });
+    this.emit('se', { id: 'debuffDeepen', delay: 0.15 });
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    this.fx({ type: 'wash', color: '#c2006b', alpha: 0.32, mode: 'full', life: 1.4, inSec: 0.25 });
+    this.fx({ type: 'callout', delay: 0.2, x: hb.x, y: this.head(hero).y - 60, text: `「${label}」が刻まれた…`, color: '#ff4fa3', size: 24, life: 1.8, rise: 20 });
+    this.fx({ type: 'burst', delay: 0.15, x: hb.x, y: this.head(hero).y - 30, shapes: ['heart', 'heartLine'], colors: ['#c2006b', '#ff4fa3', '#ffd6ec'],
+      count: 18, speed: [60, 160], size: [6, 11], life: 1.4, gravity: 160, glow: true });
+  }
+
+  // ランの中の記録（敗北の回想に使う）
+  runStats() {
+    const run = this.save.currentRun;
+    run.runStats ??= { expLost: 0, climaxes: 0, peakLevel: 0 };
+    run.runStats.peakLevel = Math.max(run.runStats.peakLevel ?? 0, this.hs.level);
+    return run.runStats;
+  }
+
+  // 演出の合図を少し遅らせる（台詞の順番を作る）。'later' の受け手が無いテストでは、すぐ実行する
+  later(sec, fn) {
+    if (this.handlers.get('later')?.size) this.emit('later', { sec, fn });
+    else fn();
+  }
+
+  // 前に負けた敵と再会したとき：勝った記憶で煽ってくる。負けた回数が多いほど強く
+  encounterTaunt(u) {
+    const gift = this.eco.giftsOf(u.speciesId)[0];
+    if (gift) {
+      // 自分の贈り物を着けているのに気づく
+      this.speak(u, `あっ……わたしの${gift.name.split('の').pop()}、着けてくれてるんだ♡`);
+      const hb = this.body(this.exp.hero);
+      this.fx({ type: 'burst', x: hb.x, y: hb.y - 10, shapes: ['heart'], colors: [this.theme(u).main, '#ffd6ec'], count: 10, speed: [40, 120], size: [5, 8], life: 0.9, gravity: -40 });
+      return;
+    }
+    const defeats = this.p.codex?.entries?.[u.speciesId]?.defeats ?? 0;
+    if (defeats <= 0) return;
+    const C = this.B.encounterTaunt;
+    const tier = defeats >= C.tiers[2] ? 2 : defeats >= C.tiers[1] ? 1 : 0;
+    const theme = this.theme(u);
+    const b = this.body(u);
+    const h = this.head(u);
+    this.speak(u, familiarLineFor(u.speciesId, tier));
+    this.emit('log', 'enemyRemembers', { name: u.name, count: defeats });
+    this.fx({ type: 'burst', x: h.x, y: h.y, shapes: ['heart', 'heartLine'], colors: [theme.main, theme.glow, theme.accent],
+      count: 6 + tier * 8, speed: [40, 120 + tier * 60], size: [5, 9 + tier * 2], life: 1.0, gravity: -40, glow: tier > 0 });
+    if (tier >= 1) this.fx({ type: 'glyph', x: b.x, y: b.y + 42, style: 'heart', color: theme.main, sub: theme.glow, r: 40 + tier * 12, life: 1.6 });
+    if (tier >= 2) this.fx({ type: 'wash', color: theme.main, alpha: 0.18, life: 1.2 });
+    this.emit('se', { id: tier >= 1 ? 'temptPrelude' : 'warning', tx: u.tx, ty: u.ty, gain: 0.6 + 0.2 * tier });
+  }
+
+  // 敗北の回想に出す内容（finalizeDefeat の中で集める）
+  buildDefeatRecap(d, beforeLose) {
+    const p = this.p;
+    const rs = this.runStats();
+    const name = ENEMIES_BY_ID[d.raceId]?.name ?? d.name;
+    const hints = [ENEMY_HINTS[d.raceId], GENERAL_HINTS[p.stats.defeatCount % GENERAL_HINTS.length]].filter(Boolean);
+    return {
+      raceId: d.raceId,
+      name,
+      skill: DEFEAT_SKILLS[d.skillId]?.name ?? SKILL_STAGES[d.skillId]?.name ?? d.skillId,
+      line: sceneLineFor(d.raceId, 'defeat'),
+      theme: themeOf(d.raceId),
+      expLost: rs.expLost,
+      climaxes: rs.climaxes,
+      peakLevel: rs.peakLevel,
+      level: this.hs.level,
+      defeats: p.codex?.entries?.[d.raceId]?.defeats ?? 0,
+      loseHabit: { from: beforeLose, to: p.debuffs.loseHabit.byRace[d.raceId] ?? 0 },
+      harvest: this.harvest ? { ...this.harvest } : null,
+      rpGain: this.lastRpGain ?? 0,
+      hints
+    };
+  }
+
+  // 敵が強くなったときの演出
+  celebrateEnemy(unit, text) {
+    const theme = this.theme(unit);
+    const b = this.body(unit);
+    const h = this.head(unit);
+    this.fx({ type: 'glyph', x: b.x, y: b.y + 42, style: 'heart', color: theme.main, sub: theme.glow, r: 58, life: 1.8, spin: 2 });
+    this.fx({ type: 'burst', x: b.x, y: h.y, shapes: ['heart', 'heart', 'heartLine'], colors: [theme.main, theme.glow, theme.accent], count: 18, speed: [80, 220], size: [5, 10], life: 1.0, gravity: -40, glow: true });
+    this.fx({ type: 'ring', x: b.x, y: b.y, r: 80, color: theme.main, width: 6, alpha: 0.7, life: 0.5 });
+    this.fx({ type: 'callout', x: b.x, y: h.y - 30, text, color: theme.main, size: 26 });
+    this.emit('anim', { unit, tag: 'skill_sexyPose' });
+  }
+
   // 絶頂開始時のHPドレインで倒れたとき
   defeatByClimax() {
     const first = this.bound?.binders[0];
@@ -714,6 +1243,7 @@ export class Combat extends Emitter {
     }
     this.emit('anim', { unit: this.exp.hero, tag: 'down' });
     this.bound = null;
+    this.emit('bindFormation', { formation: null });
     this.emit('boundEnd', { escaped: false, defeated: true });
     this.emit('se', { id: 'bindRelease', tx: this.exp.hero.tx, ty: this.exp.hero.ty });
     this.emit('persist');
@@ -738,8 +1268,6 @@ export class Combat extends Emitter {
     if (wasClimax) return;
     if (this.climax.isClimax()) return;
     bound.elapsed += 1;
-    bound.sincePulse += 1;
-    bound.pulseTimer += 1;
     bound.idleSec += 1;
     if (bound.idleSec >= this.B.bound.idleSurrenderSec) {
       bound.surrenderRate = Math.min(1, bound.surrenderRate + this.B.bound.surrenderPerIdleSec);
@@ -748,6 +1276,17 @@ export class Combat extends Emitter {
     if (bound.surrenderRate >= 0.8) {
       bound.escapeProgress = Math.max(0, bound.escapeProgress - 0.5);
     }
+  }
+
+  // 拘束中の吸収パルス。毎フレーム呼ぶ（dtSec はポーズ中 0）。
+  // 1回の吸収量は前回からの秒数に比例するので、間隔を変えても毎秒の吸収量は変わらない
+  boundUpdate(dtSec) {
+    const bound = this.bound;
+    if (!bound || !(dtSec > 0)) return;
+    this.updateBindRequest(dtSec);
+    if (!this.bound || this.climax.isClimax()) return;
+    bound.sincePulse += dtSec;
+    bound.pulseTimer += dtSec;
     if (bound.pulseTimer < this.B.bound.pulseSec) return;
     bound.pulseTimer -= this.B.bound.pulseSec;
     this.boundPulse(bound.sincePulse);
@@ -767,19 +1306,29 @@ export class Combat extends Emitter {
     const drainMul = avg((b) => {
       const ability = getAbilityLevel(this.p, b.unit.speciesId, drainAbilityId(b.attr));
       const lose = this.p.debuffs.loseHabit.byRace[b.unit.speciesId] ?? 0;
-      return (1 + B.battle.drainPerLevel * ability) * (1 + lose * B.habit.loseMpPerStage);
+      const evolved = isEvolved(this.p, b.unit.speciesId, b.skillId) ? B.skillEvolution.powerMul : 1;
+      const cond = this.conditions.boost(b.unit.speciesId, 'drain');
+      const formation = bound.formation?.drain(b.attr) ?? 1;
+      const u = b.unit;
+      const bond = (u.bondPower ?? 1) * ((u.bondSkillAttrs ?? []).includes(b.attr) ? (u.bondSkillMul ?? 1) : 1)
+        * (b.unite ? B.unite.bindDrainMul : 1)
+        * this.eco.drainMulFrom(u.speciesId);   // 贈り物の呪い・貢いだ額
+      return (1 + B.battle.drainPerLevel * ability) * (1 + lose * B.habit.loseMpPerStage) * evolved * cond * formation * bond;
     });
-    const resistance = Math.min(...bound.binders.map((b) => this.p.resistances[b.attr] ?? 0));
+    const resistance = Math.min(...bound.binders.map((b) => this.eco.resistanceOf(b.attr)));
     const resMul = 1 + Math.max(0, -resistance) / 100;
     const uniteMul = B.escape.uniteCoef[Math.min(bound.binders.length, B.escape.uniteCoef.length) - 1];
     const backMul = bound.isBackBind ? B.bound.backAbsorb : 1;
     const surrenderMul = 1 + bound.surrenderRate * 0.8;
     const mul = Math.min(B.bound.absorbCap, drainMul * softness.drainMul * resMul * uniteMul * backMul * surrenderMul);
-    const scale = this.climax.drainScale() * this.buffs.mult('drainTaken');
+    const angry = bound.angerSec > 0 ? B.bindRequest.refuseDrainMul : 1;
+    const scale = this.climax.drainScale() * this.buffs.mult('drainTaken') * this.conditions.mult('drainTaken') * angry;
     const choiceMul = bound.choiceDrainMul ?? 1;
     const amount = Math.min(hs.mp, Math.max(1, Math.round(B.bound.mpPerSec * durationSec * mul * scale * choiceMul)));
     hs.mp -= amount;
-    this.drainHeroExp(B.bound.expDrainPerSec * durationSec * mul * scale * choiceMul);
+    this.eco.wearGear(bound.binders);   // その部位の装備が溶かされていく
+    const expMul = avg((b) => SKILL_DEFS[b.skillId]?.bindExpMul ?? 1);
+    this.drainHeroExp(B.bound.expDrainPerSec * durationSec * mul * scale * choiceMul * expMul);
     for (const binder of bound.binders) {
       const { unit, attr, skillId } = binder;
       this.gainDrainExperience(unit, amount * B.bound.expShareRate);
@@ -787,7 +1336,8 @@ export class Combat extends Emitter {
       if (abilityId) this.abilityEvents(addAbilityProgress(this.p, unit.speciesId, abilityId, B, {
         pts: 1, grownThisBattle: this.grown
       }));
-      this.emit('se', { id: SKILL_DEFS[skillId].se, tx: unit.tx, ty: unit.ty, behind: bound.isBackBind });
+      // 耳をふさがれている間も、拘束役の音だけは耳元ではっきり聞こえる
+      this.emit('se', { id: SKILL_DEFS[skillId].se, tx: unit.tx, ty: unit.ty, behind: bound.isBackBind, clear: (bound.formation?.muffle ?? 0) > 0 });
     }
     const binder = bound.binders[0];
     const skillName = DEFEAT_SKILLS[binder.skillId]?.name ?? binder.skillId;
@@ -795,7 +1345,89 @@ export class Combat extends Emitter {
     if (hs.mp === 0) this.emit('log', 'mpEmpty', {});
     for (const { unit, skillId } of bound.binders) this.bindEffect(unit, skillId, true);
     this.emit('drainPulse', { strength: 1 });
+    if (!bound.lowMpSaid && hs.mp > 0 && hs.mp / hs.maxMp < B.bindRequest.lowMpWhisperRatio) {
+      bound.lowMpSaid = true;
+      const u = bound.binders[Math.floor(Math.random() * bound.binders.length)].unit;
+      this.speak(u, sceneLineFor(u.speciesId, 'lowMp'));
+    }
+    if (bound.blissSec > 0) {
+      const hb = this.body(this.exp.hero);
+      this.fx({ type: 'burst', x: hb.x, y: hb.y - 30, shapes: ['heart', 'heartLine'], colors: ['#ff4fa3', '#ffd6ec', '#ff9fd0'],
+        count: 10, speed: [80, 200], size: [6, 11], life: 0.9, gravity: -60, glow: true });
+    }
     this.emit('persist');
+  }
+
+  // ---- 拘束中のおねだり ----
+  // 一定時間ごとに、拘束役が「おねがい」してくる。受け入れると脱出の進みが戻る代わりに、甘い演出が強まる。
+  // 拒むと、しばらく吸われる量が増える。時間切れは受け入れ扱い
+  updateBindRequest(dtSec) {
+    const bound = this.bound;
+    const R = this.B.bindRequest;
+    bound.angerSec = Math.max(0, (bound.angerSec ?? 0) - dtSec);
+    bound.blissSec = Math.max(0, (bound.blissSec ?? 0) - dtSec);
+    if (bound.request) {
+      bound.request.age += dtSec;
+      if (bound.request.age >= R.timeoutSec) this.answerBindRequest('timeout');
+      return;
+    }
+    if (this.climax.isClimax() || this.hs.mp <= 0) return;
+    bound.requestTimer = (bound.requestTimer ?? R.firstSec) - dtSec;
+    if (bound.requestTimer > 0) return;
+    bound.requestTimer = R.everySec;
+    const unit = bound.binders[Math.floor(Math.random() * bound.binders.length)].unit;
+    bound.request = { unit, line: sceneLineFor(unit.speciesId, 'request'), age: 0, timeoutSec: R.timeoutSec };
+    this.speak(unit, bound.request.line, { bubble: false });
+    this.emit('se', { id: 'temptPrelude', tx: unit.tx, ty: unit.ty, clear: true });
+    this.emit('bindRequest', { request: bound.request });
+  }
+
+  answerBindRequest(answer) {
+    const bound = this.bound;
+    const req = bound?.request;
+    if (!req) return false;
+    const R = this.B.bindRequest;
+    bound.request = null;
+    this.emit('bindRequestEnd', { answer });
+    const u = req.unit;
+    const hb = this.body(this.exp.hero);
+    const theme = this.theme(u);
+    if (answer === 'refuse') {
+      bound.angerSec = R.refuseSec;
+      this.speak(u, sceneLineFor(u.speciesId, 'requestRefuse'));
+      this.emit('log', 'bindRequestRefused', { name: u.name });
+      this.fx({ type: 'burst', x: hb.x, y: hb.y - 20, shapes: ['heartLine'], colors: [RESIST_COLORS.main, '#ffffff'], count: 10, speed: [100, 220], size: [6, 9], life: 0.6 });
+      this.emit('se', { id: 'contestWin', gain: 0.6 });
+      return true;
+    }
+    // お金を差し出す（貢ぎ）：脱出が進む代わりに、その子が強くなる
+    if (answer === 'tribute') {
+      if (this.eco.tribute(u) <= 0) {
+        this.speak(u, 'お金、ないじゃん♡ じゃあ……体で払ってもらうね？');
+        answer = 'timeout';
+      } else {
+        this.speak(u, 'わぁ、こんなに？♡ ……ふふ、また貢いでね？');
+        return true;
+      }
+    }
+    // 受け入れる（時間切れも同じ）
+    bound.escapeProgress = Math.max(0, bound.escapeProgress - bound.requiredClicks * R.acceptPushback);
+    bound.surrenderRate = Math.min(1, bound.surrenderRate + R.acceptSurrender);
+    bound.blissSec = R.blissSec;
+    this.refreshBoundRequirement();
+    this.p.stats.requestAcceptCount = (this.p.stats.requestAcceptCount ?? 0) + 1;
+    this.speak(u, sceneLineFor(u.speciesId, 'requestAccept'));
+    this.emit('log', answer === 'timeout' ? 'bindRequestTimeout' : 'bindRequestAccepted', { name: u.name });
+    const binderAttr = bound.binders.find((b) => b.unit === u)?.attr ?? this.attrOf(u.speciesId);
+    this.eco.rollGift(u, binderAttr, 'request');
+    this.emit('se', { id: 'temptAccept' });
+    this.fx({ type: 'wash', color: theme.main, alpha: 0.3, mode: 'full', life: 1.2 });
+    this.fx({ type: 'burst', x: hb.x, y: hb.y - 20, shapes: ['heart', 'heart', 'heartLine'], colors: [theme.main, theme.glow, '#ff2d86'],
+      count: 26, speed: [120, 300], size: [7, 13], life: 1.0, glow: true });
+    this.fx({ type: 'callout', x: hb.x, y: this.head(this.exp.hero).y - 50, text: 'すきすき♡', color: theme.main, size: 32, wobble: 0.12 });
+    this.emit('drainPulse', { strength: 1 });
+    this.emit('persist');
+    return true;
   }
 
   gainDrainExperience(enemy, amount) {
@@ -803,21 +1435,31 @@ export class Combat extends Emitter {
     const absorbedExp = amount * (this.B.enemy.absorbExpMultiplier ?? 1);
     enemy.exp += absorbedExp;
     this.emit('enemyExperience', { enemy, amount: absorbedExp });
-    while (enemy.exp >= enemyExpNeeded(enemy.level, this.B)) {
-      enemy.exp -= enemyExpNeeded(enemy.level, this.B);
-      const raceId = enemy.speciesId;
-      const nextLevel = (this.p.enemyLevels[raceId] ?? 0) + 1;
-      this.p.enemyLevels[raceId] = nextLevel;
+    // 一気に何レベルも上がっても、演出とログは1回にまとめる
+    let gained = 0;
+    const raceId = enemy.speciesId;
+    while (enemy.exp >= enemyExpNeeded(enemy.level + gained, this.B)) {
+      enemy.exp -= enemyExpNeeded(enemy.level + gained, this.B);
+      gained += 1;
+    }
+    if (gained > 0) {
+      this.p.enemyLevels[raceId] = (this.p.enemyLevels[raceId] ?? 0) + gained;
       const raceUnits = this.exp.units.filter((unit) => unit.kind === 'enemy' && unit.speciesId === raceId);
+      if (!raceUnits.includes(enemy)) raceUnits.push(enemy);
       for (const unit of raceUnits) {
-        unit.level += 1;
-        unit.maxHp += this.B.enemy.hpPerLevel;
-        unit.hp = Math.min(unit.maxHp, unit.hp + this.B.enemy.hpPerLevel);
+        unit.level += gained;
+        unit.maxHp += this.B.enemy.hpPerLevel * gained;
+        unit.hp = Math.min(unit.maxHp, unit.hp + this.B.enemy.hpPerLevel * gained);
+        if (!this.exp.units.includes(unit)) continue;
         this.emit('anim', { unit, tag: 'skill_sexyPose' });
         const pos = this.body(unit);
-        this.fx({ type: 'sparkle', x: pos.x, y: this.head(unit).y });
+        const th = this.theme(unit);
+        const big = Math.min(3, gained);
+        this.fx({ type: 'burst', x: pos.x, y: this.head(unit).y, shapes: ['heart', 'heartLine'], colors: [th.main, th.glow, th.accent], count: 10 + 6 * big, speed: [60, 140 + 30 * big], size: [5, 8 + big], life: 0.9, gravity: -50, glow: true });
+        this.fx({ type: 'ring', x: pos.x, y: pos.y + 40, r: 50 + 8 * big, squash: 0.45, color: th.main, width: 5, alpha: 0.7, life: 0.5 });
+        this.fx({ type: 'callout', x: pos.x, y: this.head(unit).y - 34, text: gained > 1 ? `Lv UP×${gained}♡` : 'Lv UP♡', color: th.main, size: 22 + 3 * big });
       }
-      this.emit('log', 'enemyLevelUp', { name: enemy.name, level: enemy.level });
+      this.emit('log', 'enemyLevelUp', { name: enemy.name, level: enemy.level, gain: gained });
     }
     if (!enemy.advancedSkill || enemy.advancedSkillUnlocked) return;
     enemy.drainExp += amount;
@@ -849,6 +1491,9 @@ export class Combat extends Emitter {
     }
     this.escapeInvulnTurns = 1;
     this.bound = null;
+    for (const [id, def] of Object.entries(STATUSES)) if (def.consumeOnBind) this.conditions.consume(id);
+    this.emit('bindFormation', { formation: null });
+    this.emit('bindRequestEnd', { answer: null });
     this.emit('anim', { unit: hero, tag: 'idle' });
     this.emit('boundEnd', { escaped: true, reason: byClimax ? 'climax' : 'escape' });
     this.emit('se', { id: 'bindRelease', tx: hero.tx, ty: hero.ty });
@@ -860,8 +1505,10 @@ export class Combat extends Emitter {
     this.exp.turnCount += 1;
   }
 
-  skillLabel(skillId) {
-    return DEFEAT_SKILLS[skillId]?.name ?? SKILL_STAGES[skillId]?.name ?? skillId;
+  // 技名。進化済みの技は「・改」が付く
+  skillLabel(skillId, unit = null) {
+    const name = DEFEAT_SKILLS[skillId]?.name ?? SKILL_STAGES[skillId]?.name ?? skillId;
+    return unit && isEvolved(this.p, unit.speciesId, skillId) ? `${name}・改` : name;
   }
 
   shouldBanner(def, rawStage) {
@@ -873,9 +1520,10 @@ export class Combat extends Emitter {
     if (!def || !this.shouldBanner(def, SKILL_STAGES[skillId])) return;
     this.emit('skillName', {
       key: skillId,
-      title: this.skillLabel(skillId),
+      title: this.skillLabel(skillId, e),
       sub: e.name,
       attr: def.attr ?? this.attrOf(e.speciesId),
+      color: this.theme(e).main,
       holdSec
     });
   }
@@ -888,6 +1536,7 @@ export class Combat extends Emitter {
       enemy: { body: this.body(e), head: this.head(e) },
       dir: { dx: Math.sign(e.tx - hero.tx), dy: Math.sign(e.ty - hero.ty) },
       def, attr, index, count: perf.stage.hits.count, progress,
+      theme: this.theme(e),
       ...losses
     };
   }
@@ -898,7 +1547,9 @@ export class Combat extends Emitter {
     const count = stage.hits.count;
     const progress = at === 'start' ? 0 : at === 'end' ? 1 : count > 1 ? index / (count - 1) : 0;
     const context = this.stageContext(perf, index, progress, losses);
+    const flags = perf.payload.flags ?? {};
     for (const cue of cuesFor(stage.fx, at, index, count)) {
+      if (!this.cueAllowed(cue, flags)) continue;
       const build = STAGE_FX[cue.id];
       if (!build) {
         console.warn(`Unknown skill stage effect: ${cue.id}`);
@@ -909,6 +1560,7 @@ export class Combat extends Emitter {
       }
     }
     for (const cue of cuesFor(stage.se, at, index, count)) {
+      if (!this.cueAllowed(cue, flags)) continue;
       const id = cue.id === '$skill' ? def.se : cue.id;
       if (!id) continue;
       const from = cue.gain ?? 1;
@@ -923,6 +1575,10 @@ export class Combat extends Emitter {
   }
 
   onStageStart(perf) {
+    if (perf.payload.prelude) {
+      this.startChoicePrelude(perf.payload);
+      return;
+    }
     const { e, skillId, def, attr, ctx, skillName, windupOnly } = perf.payload;
     const { stage } = perf;
     if (!windupOnly) {
@@ -937,12 +1593,12 @@ export class Combat extends Emitter {
     }
     if (stage.flashSec > 0) {
       const b = this.body(e);
-      this.emit('skillFlash', { x: b.x, y: b.y, attr, sec: stage.flashSec });
+      this.emit('skillFlash', { x: b.x, y: b.y, attr, color: this.theme(e).main, sec: stage.flashSec });
       if (this.save.settings.flashback !== 'off') this.emit('se', { id: 'skillFlash', tx: e.tx, ty: e.ty });
     }
     if (windupOnly) return;
     if (def.category === 'special' && !ctx?.choiceResolved) {
-      this.emit('log', 'enemySpeak', { name: e.name, line: speechFor(e.speciesId, attr) });
+      this.speak(e, speechFor(e.speciesId, attr, skillId));
     }
     if (this.shouldBanner(def, SKILL_STAGES[skillId])) {
       this.emit('skillName', {
@@ -950,6 +1606,7 @@ export class Combat extends Emitter {
         title: skillName,
         sub: e.name,
         attr,
+        color: this.theme(e).main,
         holdSec: Math.max(this.B.stage.banner.holdMinSec, stage.flashSec + stage.durationSec + 0.2)
       });
     }
@@ -958,25 +1615,37 @@ export class Combat extends Emitter {
 
   onStageHit(perf, index) {
     const pl = perf.payload;
-    if (pl.windupOnly) return;
+    if (pl.windupOnly || pl.prelude) return;
     const { B, hs } = this;
     const { e, skillId, def, nums, attr, skillName } = pl;
     const { stage } = perf;
     const count = stage.hits.count;
     const per = stage.perHit;
+    // 押し返した・中断した・まだ無害な技のときは、演出だけ流して被害は無い
+    if (pl.blocked || pl.flags?.gentle) {
+      this.runCues(perf, 'hit', index);
+      return;
+    }
     const guard = this.guarding ? B.battle.guardMul : 1;
-    const scale = this.climax.drainScale() * this.buffs.mult('drainTaken') * (pl.choiceDrainMul ?? 1);
+    const scale = this.climax.drainScale() * this.buffs.mult('drainTaken') * (pl.choiceDrainMul ?? 1)
+      * this.conditions.mult('drainTaken');
 
     let hpLoss = 0;
     if (nums.hpRate && per.hp > 0) {
       const [lo, hi] = def.category === 'attack' ? [B.damage.minRate, B.damage.maxRate] : [0, 1];
       const rate = rollRate(nums.hpRate, lo, hi, e.level - hs.level, B);
-      hpLoss = Math.min(hs.hp, Math.max(1, Math.round(hs.maxHp * rate * per.hp * guard)));
+      hpLoss = Math.min(hs.hp, Math.max(1, Math.round(hs.maxHp * rate * per.hp * guard * (pl.powerMul ?? 1))));
     }
     let mpLoss = 0;
     if (nums.mpRate && per.mp > 0) {
-      mpLoss = Math.min(hs.mp, Math.round(hs.maxMp * nums.mpRate * pl.mpMul * per.mp * guard * scale));
+      mpLoss = Math.round(hs.maxMp * nums.mpRate * pl.mpMul * per.mp * guard * scale);
     }
+    // HP は絶頂のときにしか減らない。それ以外の打撃は、体の力（MP）が抜けていく分に変わる
+    if (hpLoss > 0 && !this.climax.isClimax()) {
+      mpLoss += Math.round(hs.maxMp * (hpLoss / hs.maxHp) * B.battle.hpToMpRate);
+      hpLoss = 0;
+    }
+    mpLoss = Math.min(hs.mp, mpLoss);
     let expLost = 0;
     if (nums.expRate && per.exp > 0) {
       expLost = this.drainHeroExp(nums.expRate * pl.mpMul * per.exp * guard * scale).lost;
@@ -1002,7 +1671,7 @@ export class Combat extends Emitter {
       if (expLost > 0) {
         this.fx({
           type: 'damage', delay: 0.26, x: hb.x, y: headY - (mpLoss > 0 ? 44 : 26),
-          text: `EXP -${expLost}`, style: 'info'
+          text: `EXP -${expLost}`, style: 'exp'
         });
       }
     }
@@ -1017,6 +1686,9 @@ export class Combat extends Emitter {
       this.abilityEvents(addAbilityProgress(this.p, e.speciesId, drainAbilityId(attr), B, {
         pts: 1, grownThisBattle: this.grown
       }));
+    }
+    if (index === count - 1 && (pl.total.hp > 0 || pl.total.mp > 0)) {
+      this.handleEvents(recordEvoProgress(this.p, e.speciesId, skillId, def, 'repeated_use'), e, skillId);
     }
     if (hs.hp <= 0) {
       this.emit('anim', { unit: this.exp.hero, tag: 'down', delay: 0.2 });
@@ -1033,6 +1705,10 @@ export class Combat extends Emitter {
 
   onStageEnd(perf, cancelled) {
     const pl = perf.payload;
+    if (pl.prelude) {
+      if (!cancelled) this.endChoicePrelude(pl);
+      return;
+    }
     if (pl.windupOnly) return;
     const { e, skillName, total } = pl;
     const hero = this.exp.hero;
@@ -1047,29 +1723,399 @@ export class Combat extends Emitter {
       if (total.exp > 0) {
         this.fx({
           type: 'damage', x: hb.x, y: headY - (total.mp > 0 ? 62 : 26),
-          text: `EXP -${total.exp}`, style: 'info', big: true
+          text: `EXP -${total.exp}`, style: 'exp', big: true
         });
       }
+    }
+    if (total.exp > 0) {
+      this.handleEvents(recordEvoProgress(this.p, e.speciesId, pl.skillId, pl.def, 'exp_absorbed', total.exp), e, pl.skillId);
+    }
+    if (pl.def?.countdown && total.mp > 0 && this.hs.mp === 0) {
+      this.handleEvents(recordEvoProgress(this.p, e.speciesId, pl.skillId, pl.def, 'mp_zero', 1), e, pl.skillId);
     }
     if (!cancelled) {
       this.runCues(perf, 'end', perf.stage.hits.count - 1, {
         hpLoss: total.hp, mpLoss: total.mp, expLost: total.exp
       });
+      if (!pl.blocked && !this.defeated) this.applySkillEffects(pl);
+      if (!pl.blocked && !pl.flags?.gentle && !this.defeated) this.eco.steal(e, pl.skillId);
     }
     this.emit('persist');
+  }
+
+  // 技が当たったあとの追加効果：蓄積デバフ・一時状態・連携・進化の進み
+  applySkillEffects(pl) {
+    const { B } = this;
+    const { e, skillId, def, flags = {} } = pl;
+    if (this.climax.isStatusImmune()) return;
+    const guarded = flags.resisted && def.resist === 'guard';
+    if (def.cond && !guarded) {
+      let gain = def.cond.gain;
+      if (flags.timeout) gain *= B.temptation.timeoutCondMul;
+      else if (flags.accepted) gain *= B.temptation.acceptCondMul;
+      if (flags.evolved) gain *= B.skillEvolution.condMul;
+      this.handleEvents(this.conditions.gain(def.cond.id, gain, {
+        floorKey: this.floorKey(),
+        voluntary: flags.accepted && !flags.timeout
+      }), e, skillId);
+    }
+    if (def.status && !guarded && Math.random() < (def.status.chance ?? 1)) {
+      this.handleEvents(this.conditions.addStatus(def.status.id, def.status.turns), e, skillId);
+    }
+    if (def.acceptStatus && (flags.accepted || flags.contestLose)) {
+      this.handleEvents(this.conditions.addStatus(def.acceptStatus.id, def.acceptStatus.turns), e, skillId);
+    }
+    // 押されるままになると、背中を向けてしまう（次の背面すりすりが背面拘束になる）
+    if (def.resist === 'contest' && (flags.accepted || flags.contestLose)) {
+      const hero = this.exp.hero;
+      hero.setDir(hero.tx - e.tx, hero.ty - e.ty);
+    }
+    if (def.combo) e.comboNext = def.combo;
+    // 偽りの祝福：HP を少し回復する（そのぶん MP が漏れていく）
+    if (def.heal && !guarded) {
+      const hs = this.hs;
+      const heal = Math.min(hs.maxHp - hs.hp, Math.round(hs.maxHp * (pl.nums?.healRate ?? 0)));
+      if (heal > 0) {
+        hs.hp += heal;
+        const hb = this.body(this.exp.hero);
+        this.fx({ type: 'damage', delay: 0.1, x: hb.x, y: this.head(this.exp.hero).y, text: `+${heal}`, style: 'heal' });
+      }
+    }
+    // 押し飛ばす
+    if (def.knockback) this.knockHero(e, def.knockback);
+    // 漏れた分を、まとめて回収する
+    if (def.collect) this.collectLeaked(e, pl.nums?.collectMul ?? 1);
+    // 足元に罠を仕掛ける
+    if (def.traps) this.placeTraps(e, def.traps);
+    // 突進が当たったら、そのまま抱きついて拘束に入る
+    if (def.chargeBind && !this.bound && !e.bindImmune && this.escapeInvulnTurns <= 0
+      && Math.abs(e.tx - this.exp.hero.tx) + Math.abs(e.ty - this.exp.hero.ty) === 1) {
+      const bindId = ENEMIES_BY_ID[e.speciesId]?.bindSkills?.[0];
+      if (bindId) this.startBound(e, bindId, true, { answer: 'charge', drainMul: 1 });
+    }
+    // 印を付けた種族の敵は、どこにいても追ってくる
+    if (def.lure && !guarded) {
+      for (const u of this.exp.units) if (u.kind === 'enemy' && u.speciesId === e.speciesId) u.lured = true;
+    }
+    if (flags.accepted || flags.contestLose) {
+      this.handleEvents(recordEvoProgress(this.p, e.speciesId, skillId, def, 'choice_count'), e, skillId);
+    }
+  }
+
+  // 回避率。技の基本値 + 選択肢・防御の上乗せ に、主人公の状態の倍率を掛ける
+  evadeChance(nums, bonus = 0) {
+    const base = nums.evade ?? 0;
+    if (base <= 0 && bonus <= 0) return 0;
+    const guard = this.guarding ? this.B.battle.guardEvade : 0;
+    return clamp((base + bonus + guard) * this.conditions.mult('evade'), 0, 0.95);
+  }
+
+  // 技をかわした
+  missSkill(e, skillId, byChoice) {
+    const hero = this.exp.hero;
+    if (byChoice) this.dodgeChoice(e);
+    else this.emit('log', 'skillMiss', { name: e.name, skill: this.skillLabel(skillId, e) });
+    const def = SKILL_DEFS[skillId];
+    this.emit('anim', { unit: e, tag: def.motion ?? 'skill_sexyPose' });
+    this.emit('se', { id: def.se, tx: e.tx, ty: e.ty, gain: 0.6 });
+    this.emit('se', { id: 'missWhoosh', tx: hero.tx, ty: hero.ty, delay: 0.2 });
+    const hb = this.body(hero);
+    const theme = this.theme(e);
+    this.fx({ type: 'flow', delay: 0.05, from: this.head(e), to: { x: hb.x, y: hb.y - 20 }, shape: 'heart', colors: [theme.main, theme.glow], count: 6, life: 0.4, spanSec: 0.2, arc: 30, size: [4, 7] });
+    this.fx({ type: 'burst', delay: 0.2, x: hb.x, y: hb.y - 10, shapes: ['heartLine', 'heart'], colors: [RESIST_COLORS.main, RESIST_COLORS.glow, theme.glow], count: 8, speed: [120, 240], size: [5, 9], life: 0.5 });
+    this.fx({ type: 'callout', delay: 0.2, x: hb.x, y: this.head(hero).y - 18, text: 'かわした！', color: RESIST_COLORS.main, size: 28 });
+    this.actedThisTurn = true;
+  }
+
+  // カウントダウンの中断。成功すればカウントが止まり、永続段階の回復も進む
+  rollInterrupt(e) {
+    const c = this.B.interrupt;
+    const chance = clamp(c.base + (this.hs.level - e.level) * c.perLevel - this.conditions.value('submission') * 0.03, c.min, c.max);
+    const ok = Math.random() < chance;
+    this.emit('log', ok ? 'countInterrupted' : 'countNotInterrupted', { name: e.name });
+    if (ok) this.handleEvents(this.conditions.recordResist('submission'), e, 'countdown');
+    return ok;
+  }
+
+  // 主人公を、敵から離れる向きに n マス押し飛ばす
+  knockHero(e, n) {
+    const hero = this.exp.hero;
+    const dx = Math.sign(hero.tx - e.tx);
+    const dy = Math.sign(hero.ty - e.ty);
+    if (!dx && !dy) return;
+    const from = this.body(hero);
+    let moved = 0;
+    for (let i = 0; i < n; i++) {
+      const x = hero.tx + dx;
+      const y = hero.ty + dy;
+      if (!this.exp.map.isWalkable(x, y) || this.exp.unitAt(x, y)) break;
+      hero.moveTo(x, y);
+      moved += 1;
+    }
+    hero.setDir(-dx, -dy);
+    if (!moved) return;
+    hero.fromX = hero.tx;
+    hero.fromY = hero.ty;
+    this.exp.refresh();
+    const to = this.body(hero);
+    this.fx({ type: 'flow', from, to, shape: 'streak', colors: ['#ffffff', this.theme(e).main], count: 8, life: 0.25, spanSec: 0.1, arc: 0, wobble: 4, size: [6, 10] });
+    this.fx({ type: 'burst', x: to.x, y: to.y + 36, shape: 'fluff', colors: ['#ffc2dc', '#ffe3f2'], count: 8, speed: [40, 120], size: [8, 14], life: 0.6, gravity: -20 });
+  }
+
+  // 魔力漏出で漏れた分を、まとめて回収する
+  collectLeaked(e, mul) {
+    const hs = this.hs;
+    const run = this.conditions.run;
+    const leaked = run.leaked ?? 0;
+    const amount = Math.min(hs.mp, Math.round(leaked * mul));
+    run.leaked = 0;
+    const hb = this.body(this.exp.hero);
+    const eb = this.body(e);
+    const theme = this.theme(e);
+    if (amount <= 0) {
+      this.fx({ type: 'callout', x: eb.x, y: this.head(e).y - 30, text: '回収するものがありませんね', color: theme.glow, size: 18 });
+      return;
+    }
+    hs.mp -= amount;
+    this.gainDrainExperience(e, amount);
+    this.emit('log', 'manaCollected', { name: e.name, amount });
+    // まわりに散った魔力が、すべてメイドの手元へ吸い寄せられる
+    this.fx({ type: 'swirl', x: eb.x, y: eb.y - 20, shapes: ['dot', 'heart'], colors: ['#c9a6ff', theme.main, '#ffffff'], count: 24, r0: 220, r1: 6, turns: 0.8, life: 0.9, size: [3, 6], glow: true });
+    this.fx({ type: 'flow', from: { x: hb.x, y: hb.y - 20 }, to: { x: eb.x, y: eb.y - 20 }, shapes: ['dot', 'heart'], colors: ['#c9a6ff', theme.main], count: 16, life: 0.5, spanSec: 0.3, arc: 30, size: [3, 6], glow: true });
+    this.fx({ type: 'damage', delay: 0.3, x: hb.x, y: this.head(this.exp.hero).y - 20, text: `MP -${amount}`, style: 'mp', big: true });
+    this.fx({ type: 'callout', delay: 0.5, x: eb.x, y: this.head(e).y - 34, text: '回収完了です', color: theme.main, size: 22 });
+  }
+
+  // 主人公のまわりに罠を仕掛ける（踏むと転倒して体勢を崩す）
+  placeTraps(e, n) {
+    const T = this.B.traps;
+    const hero = this.exp.hero;
+    const traps = (this.exp.traps ??= []);
+    const cells = [];
+    for (let dy = -T.radius; dy <= T.radius; dy++) {
+      for (let dx = -T.radius; dx <= T.radius; dx++) {
+        const x = hero.tx + dx;
+        const y = hero.ty + dy;
+        if ((!dx && !dy) || !this.exp.map.isWalkable(x, y) || this.exp.unitAt(x, y)) continue;
+        if (traps.some((t) => t.x === x && t.y === y)) continue;
+        cells.push({ x, y });
+      }
+    }
+    const theme = this.theme(e);
+    let placed = 0;
+    for (let i = 0; i < n && cells.length && traps.length < T.max; i++) {
+      const c = cells.splice(Math.floor(Math.random() * cells.length), 1)[0];
+      traps.push({ x: c.x, y: c.y, species: e.speciesId, turns: T.lifeTurns, color: theme.main });
+      const p = this.body({ tx: c.x, ty: c.y });
+      this.fx({ type: 'glyph', delay: 0.15 * i, x: p.x, y: p.y + 42, style: 'heart', color: theme.main, sub: theme.sub, r: 30, life: 0.8 });
+      placed += 1;
+    }
+    if (placed) this.emit('log', 'trapsSet', { name: e.name, count: placed });
+  }
+
+  // 罠を踏んだ
+  triggerTrap(trap) {
+    const T = this.B.traps;
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    const owner = this.exp.units.find((u) => u.kind === 'enemy' && u.speciesId === trap.species) ?? null;
+    this.emit('se', { id: 'trapSpring', tx: hero.tx, ty: hero.ty });
+    this.emit('log', 'trapTriggered', {});
+    this.fx({ type: 'glyph', x: hb.x, y: hb.y + 42, style: 'heart', color: trap.color, sub: '#ffffff', r: 50, life: 0.7, spin: 4 });
+    this.fx({ type: 'burst', x: hb.x, y: hb.y + 20, shapes: ['heart', 'heartLine'], colors: [trap.color, '#ffd6ec'], count: 16, speed: [120, 260], size: [5, 9], life: 0.7, angle: -Math.PI / 2, spread: Math.PI });
+    this.fx({ type: 'callout', x: hb.x, y: this.head(hero).y - 30, text: 'ひっかかった♡', color: trap.color, size: 30, wobble: 0.12 });
+    this.fx({ type: 'shake', power: 0.6 });
+    this.emit('anim', { unit: hero, tag: 'hit' });
+    if (this.climax.isStatusImmune()) return;
+    this.handleEvents(this.conditions.gain('trapHabit', T.condGain, { floorKey: this.floorKey() }), owner, 'footTrap');
+    this.handleEvents(this.conditions.addStatus('offBalance', 2), owner, 'footTrap');
+    this.handleEvents(this.conditions.addStatus('tripped', 1), owner, 'footTrap');
+    this.emit('persist');
+  }
+
+  // 主人公の隣（前後左右）の、敵にいちばん近い空きマスへ一気に詰める（charge: 突進の見た目）
+  pullToward(e, charge = false) {
+    const hero = this.exp.hero;
+    if (Math.abs(e.tx - hero.tx) + Math.abs(e.ty - hero.ty) <= 1) return;
+    const spots = [[0, -1], [1, 0], [0, 1], [-1, 0]]
+      .map(([dx, dy]) => ({ x: hero.tx + dx, y: hero.ty + dy }))
+      .filter(({ x, y }) => this.exp.map.isWalkable(x, y) && !this.exp.unitAt(x, y))
+      .sort((a, b) => chebyshev(a.x, a.y, e.tx, e.ty) - chebyshev(b.x, b.y, e.tx, e.ty));
+    if (!spots.length) return;
+    const from = this.body(e);
+    e.moveTo(spots[0].x, spots[0].y);
+    e.fromX = e.tx;
+    e.fromY = e.ty;
+    const to = this.body(e);
+    const theme = this.theme(e);
+    this.fx({ type: 'flow', from, to, shape: 'streak', colors: [theme.main, theme.glow], count: charge ? 22 : 10, life: 0.25, spanSec: 0.12, arc: 0, wobble: charge ? 14 : 6, size: charge ? [8, 14] : [6, 10], glow: true });
+    if (charge) this.fx({ type: 'burst', x: from.x, y: from.y + 36, shape: 'fluff', colors: ['#ffc2dc', '#ffe3f2'], count: 10, speed: [60, 160], size: [10, 16], life: 0.6, gravity: -20 });
+    this.fx({ type: 'burst', x: to.x, y: to.y + 30, shapes: ['heart', 'heartLine'], colors: [theme.main, theme.glow], count: 8, speed: [60, 140], size: [5, 8], life: 0.5 });
+    this.exp.refresh();
+  }
+
+  // 力比べ。勝てば押し返して、相手を1ターンひるませる
+  rollContest(e) {
+    const { B, hs } = this;
+    const c = B.contest;
+    let chance = c.base + (hs.level - e.level) * c.perLevel;
+    if (this.conditions.has('offBalance')) chance -= c.offBalancePenalty;
+    chance -= this.conditions.value('hipPressure') * c.perGauge;
+    const win = Math.random() < clamp(chance, c.min, c.max);
+    if (!win) {
+      this.emit('log', 'contestLose', { name: e.name });
+      return false;
+    }
+    const hero = this.exp.hero;
+    const x = e.tx + Math.sign(e.tx - hero.tx);
+    const y = e.ty + Math.sign(e.ty - hero.ty);
+    if (this.exp.map.isWalkable(x, y) && !this.exp.unitAt(x, y)) e.moveTo(x, y);
+    e.stunTurns = 1;
+    this.emit('log', 'contestWin', { name: e.name });
+    this.handleEvents(this.conditions.recordResist('hipPressure'), e, 'foxPushContest');
+    return true;
+  }
+
+  // 蓄積デバフ・状態・進化のイベントを、ログ・音・演出にする
+  handleEvents(events, e, skillId) {
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    const hh = this.head(hero);
+    for (const ev of events ?? []) {
+      const cond = CONDITIONS[ev.id];
+      switch (ev.kind) {
+        case 'condWarn':
+          this.emit('log', 'condWarn', { cond: cond.name, hint: cond.hint });
+          this.emit('se', { id: 'conditionWarn', delay: 0.1 });
+          this.fx({ type: 'callout', delay: 0.15, x: hb.x, y: hh.y - 46, text: `${cond.name} 前兆`, color: cond.color, size: 22 });
+          this.fx({ type: 'ring', delay: 0.1, x: hb.x, y: hb.y, r: 60, color: cond.color, width: 3, alpha: 0.6 });
+          break;
+        case 'condOnset':
+          this.emit('log', 'condOnset', { cond: cond.name });
+          this.emit('se', { id: 'conditionOnset', delay: 0.1 });
+          this.fx({ type: 'swirl', delay: 0.1, x: hb.x, y: hb.y - 10, shape: 'heartLine', colors: [cond.color, '#ffffff'], count: 10, r0: 30, r1: 90, turns: 0.6, life: 0.9, size: [7, 11] });
+          this.fx({ type: 'wash', delay: 0.1, color: cond.color, alpha: 0.22, life: 1.0 });
+          this.fx({ type: 'callout', delay: 0.2, x: hb.x, y: hh.y - 46, text: `${cond.name} 発症`, color: cond.color, size: 28 });
+          break;
+        case 'condDanger':
+          this.emit('log', 'condDanger', { cond: cond.name });
+          this.emit('se', { id: 'conditionDanger', delay: 0.2 });
+          if (e && this.exp.units.includes(e)) this.speak(e, sceneLineFor(e.speciesId, 'danger'));
+          this.fx({ type: 'wash', delay: 0.2, color: cond.color, alpha: 0.3, mode: 'full', life: 1.2 });
+          break;
+        case 'condMax':
+          if (!e) break;
+          this.handleEvents(recordEvoProgress(this.p, e.speciesId, skillId, SKILL_DEFS[skillId], 'debuff_max'), e, skillId);
+          break;
+        case 'condPermanent':
+          this.emit('log', 'condPermanent', { cond: cond.name, stage: PERMANENT_STAGE_NAMES[ev.stage] });
+          this.deepenDebuff(`cond:${ev.id}`, `${cond.name} ${PERMANENT_STAGE_NAMES[ev.stage]}`);
+          this.emit('se', { id: 'conditionPermanent', delay: 0.3 });
+          this.fx({ type: 'flash', delay: 0.3, color: cond.color, alpha: 0.35, life: 0.5 });
+          this.fx({ type: 'glyph', delay: 0.3, x: hb.x, y: hb.y + 42, style: 'heart', color: cond.color, sub: '#ffffff', r: 80, life: 1.8 });
+          break;
+        case 'condRecoverProgress':
+          this.emit('log', 'condRecoverProgress', { cond: cond.name, progress: ev.progress, need: ev.need });
+          break;
+        case 'condRecover':
+          this.emit('log', 'condRecover', { cond: cond.name, stage: PERMANENT_STAGE_NAMES[ev.stage] || 'なし' });
+          this.emit('se', { id: 'conditionRecover' });
+          this.fx({ type: 'sparkle', x: hb.x, y: hh.y, color: RESIST_COLORS.main });
+          break;
+        case 'statusAdd': {
+          const st = STATUSES[ev.id];
+          this.emit('log', 'statusAdd', { status: st.name, turns: ev.turns });
+          this.fx({ type: 'callout', delay: 0.35, x: hb.x, y: hh.y - 70, text: st.name, color: st.color, size: 22 });
+          if (ev.stun) this.stunTurns += ev.stun;
+          break;
+        }
+        case 'statusLeak': {
+          const hs = this.hs;
+          const leak = Math.min(hs.mp, Math.max(1, Math.round(hs.maxMp * ev.rate)));
+          if (leak <= 0) break;
+          hs.mp -= leak;
+          this.conditions.run.leaked = (this.conditions.run.leaked ?? 0) + leak;
+          this.fx({ type: 'damage', x: hb.x, y: hh.y - 30, text: `MP -${leak}`, style: 'mp' });
+          this.fx({ type: 'burst', x: hb.x, y: hb.y - 10, shapes: ['heart', 'dot'], colors: ['#c08bff', '#ffc6e2'],
+            count: 6, speed: [30, 80], size: [3, 6], life: 0.9, gravity: 140 });
+          break;
+        }
+        case 'statusEnd':
+          this.emit('log', 'statusEnd', { status: STATUSES[ev.id]?.name ?? ev.id });
+          break;
+        case 'skillEvolved': {
+          const unit = e && e.speciesId === ev.raceId ? e : null;
+          this.emit('log', 'skillEvolved', { name: ENEMIES_BY_ID[ev.raceId]?.name ?? ev.raceId, skill: this.skillLabel(ev.skillId) });
+          this.emit('se', { id: 'skillEvolve', tx: unit?.tx, ty: unit?.ty, delay: 0.3 });
+          const line = sceneLineFor(ev.raceId, 'evolved');
+          if (unit) {
+            this.celebrateEnemy(unit, '技が進化！');
+            if (line) this.speak(unit, line);
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
   }
 
   useSkill(e, skillId, ctx) {
     const { B, p } = this;
     const def = SKILL_DEFS[skillId];
     if (!def) return;
+    recordSkillSeen(p, e.speciesId, skillId);   // 図鑑：見たことのある技
     const nums = B.skills[skillId] ?? {};
     const attr = def.attr ?? this.attrOf(e.speciesId);
     if (!ctx?.choiceResolved && this.offerChoice(e, skillId, (result) =>
-      this.useSkill(e, skillId, { ...ctx, choiceResolved: true, choiceDrainMul: result.drainMul })
+      this.useSkill(e, skillId, {
+        ...ctx, choiceResolved: true, choiceAnswer: result.answer, choiceDrainMul: result.drainMul
+      })
     )) return;
+
+    // 選択肢の結果と、演出の条件（台本の when）
+    const answer = ctx?.choiceAnswer ?? null;
+    const flags = {
+      evolved: isEvolved(p, e.speciesId, skillId),
+      accepted: answer === 'accept' || answer === 'timeout',
+      timeout: answer === 'timeout',
+      resisted: answer === 'resist',
+      careless: this.conditions.has('careless')
+    };
+    let blocked = false;
+    if (def.resist === 'contest') {
+      // 断る＝押し返す。選択肢が出なかったときも、力比べになる
+      if (!flags.accepted) {
+        flags.contestWin = this.rollContest(e);
+        blocked = flags.contestWin;
+      }
+      flags.contestLose = !flags.contestWin;
+    } else if (def.resist === 'interrupt' && flags.resisted) {
+      // 集中して中断する：成功すればカウントは止まる
+      flags.interrupted = this.rollInterrupt(e);
+      blocked = flags.interrupted;
+    } else if (def.resist === 'guard' && flags.resisted) {
+      this.guarding = true;   // 身構える：この技の被害を減らし、追加効果を防ぐ
+    } else if (def.category === 'special' && !flags.accepted) {
+      const bonus = flags.resisted && def.resist === 'dodge' ? B.temptation.resistEvadeBonus : 0;
+      if (Math.random() < this.evadeChance(nums, bonus)) {
+        this.missSkill(e, skillId, flags.resisted);
+        return;
+      }
+      if (flags.resisted) this.emit('log', 'choiceBlocked', { name: e.name });
+    }
+
     if (FLASHBACK_STRONG.has(skillId)) this.requestFlashback('strong', e, attr, skillId);
     else if (skillId === ctx?.rememberedSkillId) this.requestFlashback('rematch', e, attr, skillId);
+
+    // にじり寄る技：主人公の隣まで一気に詰める
+    if (def.pull || def.chargeBind) this.pullToward(e, def.chargeBind);
+    // 最初は無害な技：蓄積デバフが発症するか、技が進化するまでは被害を出さない
+    flags.gentle = Boolean(def.gentle && !flags.evolved
+      && (!def.cond || this.conditions.value(def.cond.id) < B.conditioning.onsetAt));
+    flags.countdown = Boolean(def.countdown);
+    const heroBack = this.exp.hero.dir;
+    flags.backstab = (e.tx - this.exp.hero.tx) * heroBack.dx + (e.ty - this.exp.hero.ty) * heroBack.dy < 0;
 
     let mpMul = 1;
     if (nums.mpRate || nums.expRate) {
@@ -1077,14 +2123,26 @@ export class Combat extends Emitter {
       const loseMp = (p.debuffs.loseHabit.byRace[e.speciesId] ?? 0) * B.habit.loseMpPerStage;
       const soft = softnessEffects(getSoftness(e.speciesId, attr, B, p.softnessOverrides), B).drainMul;
       mpMul = Math.min(B.bound.absorbCap, (1 + B.battle.drainPerLevel * drainLv) * (1 + loseMp) * soft);
+      mpMul *= this.conditions.boost(e.speciesId, 'drain') * this.eco.drainMulFrom(e.speciesId);
+      if (flags.careless && nums.carelessBonus) mpMul *= nums.carelessBonus;
+      if (flags.backstab && nums.backBonus) mpMul *= nums.backBonus;
+      if (nums.bonusWhen && this.conditions.has(nums.bonusWhen.status)) {
+        mpMul *= nums.bonusWhen.mul;
+        flags.bonus = true;
+      }
     }
+    // 敵どうしの絆で強くなった技（能力上昇・こすり合わせた部位の技の強化）
+    const bondMul = (e.bondPower ?? 1) * ((e.bondSkillAttrs ?? []).includes(attr) ? (e.bondSkillMul ?? 1) : 1);
+    const powerMul = (flags.evolved ? B.skillEvolution.powerMul : 1) * bondMul;
+    mpMul *= powerMul;
     let stage = normalizeStage(SKILL_STAGES[skillId], def.category, B.stage);
     if (ctx?.preFlashed) stage = { ...stage, flashSec: 0 };
     this.director.start({
       stage,
       payload: {
-        e, skillId, def, nums, attr, ctx, mpMul, choiceDrainMul: ctx?.choiceDrainMul ?? 1,
-        skillName: this.skillLabel(skillId),
+        e, skillId, def, nums, attr, ctx, mpMul, powerMul, flags, blocked,
+        choiceDrainMul: ctx?.choiceDrainMul ?? 1,
+        skillName: this.skillLabel(skillId, e),
         total: { hp: 0, mp: 0, exp: 0 },
         mpEmptyLogged: false
       }
@@ -1160,6 +2218,7 @@ export class Combat extends Emitter {
 
   // ---- ターンの終わり ----
   endTurn() {
+    this.eco.endTurn();
     const { B } = this;
     const hs = this.hs;
     const hero = this.exp.hero;
@@ -1170,6 +2229,19 @@ export class Combat extends Emitter {
     if (!this.bound) this.climax.onHeroTurnEnd();
     const hadBuffs = this.buffs.items.length > 0;
     this.buffs.tick();
+
+    // 罠は時間がたつと消える
+    if (this.exp.traps?.length) {
+      for (const t of this.exp.traps) t.turns -= 1;
+      this.exp.traps = this.exp.traps.filter((t) => t.turns > 0);
+    }
+    const near = new Set();
+    for (const u of this.exp.units) {
+      if (u.kind !== 'enemy') continue;
+      if (u.choiceCooldown > 0) u.choiceCooldown -= 1;
+      if (chebyshev(u.tx, u.ty, hero.tx, hero.ty) <= B.conditioning.nearRange) near.add(u.speciesId);
+    }
+    this.handleEvents(this.conditions.tickTurn(near), null, null);
 
     for (const u of this.exp.units) {
       if (u.cooldown > 0) u.cooldown -= 1;
@@ -1194,6 +2266,123 @@ export class Combat extends Emitter {
   }
 
   // ---- 敗北 ----
+  // 敗北の搾取：倒れた主人公から、まわりの敵が経験値を吸い尽くし、癖を刻み込む。
+  // 演出の長さ（秒）を返す。finalizeDefeat はその後に呼ぶ
+  defeatHarvest() {
+    const d = this.defeated;
+    if (!d || this.harvest) return 0;
+    const { B, p, hs } = this;
+    const H = B.defeatHarvest;
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    const hy = this.head(hero).y;
+    const near = (u) => Math.max(Math.abs(u.tx - hero.tx), Math.abs(u.ty - hero.ty));
+    const present = this.exp.units
+      .filter((u) => u.kind === 'enemy' && (this.exp.map.isVisible(u.tx, u.ty) || near(u) <= H.range))
+      .sort((a, b) => near(a) - near(b))
+      .slice(0, H.maxEnemies);
+    const cause = present.find((u) => u.speciesId === d.raceId) ?? null;
+    const harvest = { expLost: 0, levelsLost: 0, debuffs: [], enemies: present.map((u) => u.name), gold: 0 };
+    // 所持金は、すべて貢がされる
+    const run = this.save.currentRun;
+    if (run.gold > 0) {
+      harvest.gold = run.gold;
+      p.tributes ??= {};
+      p.tributes[d.raceId] = (p.tributes[d.raceId] ?? 0) + run.gold;
+      run.gold = 0;
+      this.later(0.9, () => {
+        const target = cause ?? present[0];
+        if (!target) return;
+        this.fx({ type: 'flow', from: { x: hb.x, y: hb.y - 10 }, to: this.head(target), shapes: ['dot', 'dot', 'heart'], colors: ['#ffd36b', '#fff2b0', '#ff4fa3'], count: 26, size: [4, 8], life: 0.8, glow: true });
+        this.fx({ type: 'damage', x: hb.x, y: hy - 100, text: `-${harvest.gold}G`, style: 'mp', big: true });
+        this.emit('se', { id: 'coinTribute' });
+      });
+    }
+    this.harvest = harvest;
+    this.clearChoice();
+    this.director.clear();
+
+    // 暗転と、勝ち誇る声
+    this.fx({ type: 'wash', color: '#3a0030', alpha: 0.45, mode: 'full', life: H.firstWaveSec + H.waves * H.waveGapSec + H.tailSec + 0.6, inSec: 0.4 });
+    this.fx({ type: 'callout', delay: 0.2, x: hb.x, y: hy - 80, text: '敗北……', color: '#ff4fa3', size: 46, life: 2.2, rise: 10 });
+    this.emit('se', { id: 'levelDown', gain: 1.2 });
+    this.emit('se', { id: 'temptPrelude', delay: 0.3, gain: 0.8 });
+    const speaker = cause ?? present[0];
+    if (speaker) this.later(0.6, () => this.speak(speaker, sceneLineFor(speaker.speciesId, 'defeat')));
+
+    // 吸い尽くす：何度かに分けて、全員で経験値を吸い上げる
+    const waves = H.waves;
+    const total = expNeeded(hs.level, B) * H.expRate * (1 + H.perEnemy * Math.max(0, present.length - 1));
+    for (let w = 0; w < waves; w++) {
+      this.later(H.firstWaveSec + w * H.waveGapSec, () => {
+        const res = loseHeroExp(hs, Math.round(total / waves), {
+          needFn: (lv) => expNeeded(lv, B), levelUp: B.battle.levelUp, minLevel: 1, keepHp: true
+        });
+        harvest.expLost += res.lost;
+        harvest.levelsLost += res.levelsLost;
+        if (res.lost > 0) this.emit('heroExpDrained', { amount: res.lost, levelsLost: res.levelsLost, level: hs.level });
+        const takers = present.filter((u) => this.exp.units.includes(u));
+        for (const u of takers) {
+          const th = this.theme(u);
+          const eb = this.body(u);
+          this.fx({ type: 'flow', from: { x: hb.x, y: hb.y - 20 }, to: { x: eb.x, y: this.head(u).y + 20 },
+            shapes: ['heart', 'dot', 'heartLine'], colors: ['#b85cff', th.main, '#ffd6ec'], count: 18, size: [5, 10], life: 0.8, spread: 30, glow: true });
+          this.later(0.7, () => this.gainDrainExperience(u, (res.lost * H.shareMul) / takers.length));
+        }
+        this.fx({ type: 'burst', x: hb.x, y: hy, shapes: ['heart', 'heartLine'], colors: ['#b85cff', '#ff4fa3', '#ffd6ec'],
+          count: 20 + 6 * w, speed: [100, 260], size: [5, 11], life: 1.0, gravity: 60, glow: true });
+        if (res.lost > 0) this.fx({ type: 'damage', x: hb.x + (w - 1) * 40, y: hy - 40 - w * 20, text: `EXP -${res.lost}`, style: 'exp', big: true });
+        this.fx({ type: 'shake', power: 0.5 + 0.2 * w });
+        this.emit('se', { id: 'expDrained', gain: 1 + 0.15 * w });
+        this.emit('drainPulse', { strength: 1 });
+      });
+    }
+
+    // 癖を刻み込む：まわりにいた敵の負け癖・蓄積デバフ・チャームポイントの耐性
+    const markAt = H.firstWaveSec + waves * H.waveGapSec + 0.2;
+    this.later(markAt, () => {
+      const byRace = p.debuffs.loseHabit.byRace;
+      const seenRace = new Set([d.raceId]);
+      for (const u of present) {
+        if (seenRace.has(u.speciesId)) continue;
+        seenRace.add(u.speciesId);
+        if (Math.random() >= H.bystanderLoseChance) continue;
+        const before = byRace[u.speciesId] ?? 0;
+        if (before >= B.habit.loseMax) continue;
+        byRace[u.speciesId] = before + 1;
+        harvest.debuffs.push(`負け癖・${u.name} ${before} → ${before + 1}`);
+        this.emit('log', 'loseHabitUp', { name: u.name, stage: before + 1 });
+      }
+      // 負かした敵の蓄積デバフ：発症を1回ぶん刻む（永続段階へ近づく）
+      const condId = Object.keys(CONDITIONS).find((id) => CONDITIONS[id].source === d.raceId);
+      if (condId) {
+        const events = this.conditions.markOnset(condId, `defeat:${p.runCount}`);
+        const st = this.conditions.stage(condId);
+        harvest.debuffs.push(events.length
+          ? `${CONDITIONS[condId].name} ${PERMANENT_STAGE_NAMES[st]}に悪化`
+          : `${CONDITIONS[condId].name}が体に染みついた`);
+        if (events.length && cause) this.handleEvents(events, cause, null);
+      }
+      // まわりの敵のチャームポイントの耐性が、さらに下がる
+      const attrs = new Set();
+      for (const u of present) for (const a of charmAttrsOf(u.speciesId)) attrs.add(a);
+      for (const attr of [...attrs].slice(0, H.maxResistAttrs)) {
+        const cur = p.resistances[attr] ?? 0;
+        const next = Math.max(B.resist.floor, cur - H.resistDrop);
+        if (next === cur) continue;
+        p.resistances[attr] = next;
+        harvest.debuffs.push(`${ATTRS[attr].label}耐性 ${cur} → ${next}`);
+      }
+      this.fx({ type: 'wash', color: '#c2006b', alpha: 0.35, mode: 'full', life: 1.4, inSec: 0.2 });
+      this.fx({ type: 'glyph', x: hb.x, y: hb.y + 42, style: 'heart', color: '#ff2d86', sub: '#ffd6ec', r: 90, life: 2.0, spin: 1.5 });
+      this.fx({ type: 'callout', delay: 0.15, x: hb.x, y: hy - 70, text: '負け癖が刻まれていく……', color: '#ff4fa3', size: 26, life: 1.8, rise: 16 });
+      this.emit('se', { id: 'debuffDeepen' });
+      this.emit('se', { id: 'conditionPermanent', delay: 0.35 });
+      this.emit('persist');
+    });
+    return markAt + H.tailSec;
+  }
+
   // 学習（カモ度・最後に負けた技）と、癖・耐性の悪化を記録する。ランのリセットは呼び出し側
   finalizeDefeat() {
     const d = this.defeated;
@@ -1214,8 +2403,10 @@ export class Combat extends Emitter {
     }, B));
 
     const byRace = p.debuffs.loseHabit.byRace;
+    const beforeLose = byRace[d.raceId] ?? 0;
     byRace[d.raceId] = Math.min(B.habit.loseMax, (byRace[d.raceId] ?? 0) + 1);
     this.emit('log', 'loseHabitUp', { name: d.name, stage: byRace[d.raceId] });
+    this.deepenDebuff(`lose:${d.raceId}`, `負け癖・${d.name}`);
 
     const attr = d.attr === 'all' ? 'mouth' : d.attr;
     const cur = p.resistances[attr] ?? 0;
@@ -1223,11 +2414,24 @@ export class Combat extends Emitter {
     if (next !== cur) {
       p.resistances[attr] = next;
       this.emit('log', 'resistDown', { attr: ATTRS[attr].label, from: cur, to: next });
+      this.deepenDebuff(`res_${attr}`, `${ATTRS[attr].label}耐性`);
     }
 
     p.stats.defeatCount += 1;
+    // 拠点の強化に使う雪辱ポイント
+    const rpGain = this.eco.rpForDefeat(run.floor, this.runStats().climaxes);
+    p.rp = (p.rp ?? 0) + rpGain;
+    this.lastRpGain = rpGain;
+    // 図鑑・回想部屋：どの技で何回負けたか
+    const entry = p.codex.entries[d.raceId];
+    if (entry && d.skillId) {
+      entry.defeatsBySkill ??= {};
+      entry.defeatsBySkill[d.skillId] = (entry.defeatsBySkill[d.skillId] ?? 0) + 1;
+    }
+    this.emit('defeatRecap', this.buildDefeatRecap(d, beforeLose));
     p.runCount += 1;
     this.defeated = null;
+    this.harvest = null;
     this.stunTurns = 0;
     this.clearChoice();
     this.director.clear();

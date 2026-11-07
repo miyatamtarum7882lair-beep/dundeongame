@@ -1,7 +1,6 @@
 // File: src/ui/exploreHud.js
-// 探索中の表示（高解像度層）。階数、HP・MP、Lv・EXP・武器、階の表示、階段の案内。
+// 探索中の表示（高解像度層）。階数、HP・MP、武器、階の表示、階段の案内。Lv・EXP は levelHud.js
 import { clamp01 } from '../core/util.js';
-import { expNeeded } from '../battle/damage.js';
 
 
 function text(g, str, x, y) {
@@ -14,46 +13,6 @@ function bar(g, x, y, w, h, ratio, color) {
   g.fillRect(x, y, w, h);
   g.fillStyle = color;
   g.fillRect(x, y, w * clamp01(ratio), h);
-}
-
-function drawLevelGauge(g, hero, B) {
-  const cx = 326;
-  const cy = 61;
-  const radius = 34;
-  const need = expNeeded(hero.level, B);
-  const ratio = clamp01(hero.exp / need);
-
-  g.save();
-  g.lineWidth = 12;
-  g.lineCap = 'round';
-  g.strokeStyle = 'rgba(0, 0, 0, 0.72)';
-  g.beginPath();
-  g.arc(cx, cy, radius, 0, Math.PI * 2);
-  g.stroke();
-  if (ratio > 0) {
-    const gradient = g.createLinearGradient(cx - radius, cy - radius, cx + radius, cy + radius);
-    gradient.addColorStop(0, '#ffe27a');
-    gradient.addColorStop(1, '#ff9d45');
-    g.strokeStyle = gradient;
-    g.beginPath();
-    g.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
-    g.stroke();
-  }
-
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.font = `bold 21px ${B.ui.fontFamily}`;
-  g.fillStyle = '#fff5d4';
-  g.strokeStyle = 'rgba(0, 0, 0, 0.9)';
-  g.lineWidth = 4;
-  g.strokeText(`Lv${hero.level}`, cx, cy);
-  g.fillText(`Lv${hero.level}`, cx, cy);
-  g.font = `bold 12px ${B.ui.fontFamily}`;
-  g.lineWidth = 3;
-  g.strokeText(`${hero.exp} / ${need} EXP`, cx, cy + 49);
-  g.fillStyle = '#fff';
-  g.fillText(`${hero.exp} / ${need} EXP`, cx, cy + 49);
-  g.restore();
 }
 
 function drawWeaponIcon(g, weapon) {
@@ -137,7 +96,7 @@ export function drawExploreHud(g, exp, B) {
 
   g.fillStyle = '#ffd36b';
   drawWeaponIcon(g, hero.weapon);
-  drawLevelGauge(g, hero, B);
+  // レベルの表示は ui/levelHud.js（経験値を吸われたときの演出つき）
 
   // 階の表示。ふわっと出て、ゆっくり消える（点滅しない）
   if (exp.bannerSec > 0) {

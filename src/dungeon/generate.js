@@ -1,5 +1,6 @@
 // File: src/dungeon/generate.js
 // 部屋と通路のダンジョン生成。同じ seed と floor なら、必ず同じ階になる。
+// 複数の敵に囲まれやすいよう、大広間・広めの部屋・幅2〜3マスの通路で作る。敵は数体ずつの群れで置く。
 import { mulberry32 } from '../core/util.js';
 import { ENEMIES_BY_ID } from '../data/enemies.js';
 import { bfsDistances } from './gridMath.js';
@@ -18,6 +19,29 @@ const centerOf = (room) => ({
   y: room.y + Math.floor(room.h / 2)
 });
 
+// その階に出る敵の種族を、ランクの重み（とデバッグの上書き）で選ぶ。rnd は 0〜1 を返す関数
+export function speciesPicker(floor, B, enemySpawnWeights = {}) {
+  const D = B.dungeon;
+  const rankWeights = D.enemyRankWeightByFloor[Math.min(Math.max(1, floor), D.floorsPerDungeon)];
+  const weighted = D.enemySpecies.map((species) => ({
+    species,
+    weight: Math.max(0, Number(enemySpawnWeights[species]
+      ?? rankWeights[ENEMIES_BY_ID[species]?.rank] ?? 0) || 0)
+  })).filter((entry) => entry.weight > 0);
+  const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+  return {
+    total,
+    pick(rnd) {
+      let roll = rnd() * total;
+      for (const entry of weighted) {
+        roll -= entry.weight;
+        if (roll < 0) return entry.species;
+      }
+      return weighted.at(-1)?.species;
+    }
+  };
+}
+
 export function generateFloor(seed, floor, B, enemySpawnWeights = {}) {
   const D = B.dungeon;
   const w = D.width;
@@ -30,8 +54,19 @@ export function generateFloor(seed, floor, B, enemySpawnWeights = {}) {
     if (x > 0 && y > 0 && x < w - 1 && y < h - 1) tiles[y * w + x] = TILE.FLOOR;
   };
 
-  // 1. 部屋を置く
+  // 1. 部屋を置く。先に大広間、そのあと普通の部屋
   const rooms = [];
+  const halls = ri(D.halls.min, D.halls.max);
+  for (let i = 0; i < D.rooms.attempts && rooms.filter((r) => r.hall).length < halls; i++) {
+    const rw = ri(D.halls.minW, D.halls.maxW);
+    const rh = ri(D.halls.minH, D.halls.maxH);
+    const room = { x: ri(2, w - rw - 3), y: ri(2, h - rh - 3), w: rw, h: rh, hall: true };
+    if (rooms.some((r) => overlaps(room, r, 3))) continue;
+    rooms.push(room);
+    for (let y = room.y; y < room.y + room.h; y++) {
+      for (let x = room.x; x < room.x + room.w; x++) carve(x, y);
+    }
+  }
   for (let round = 0; round < 10 && rooms.length < D.rooms.min; round++) {
     for (let i = 0; i < D.rooms.attempts && rooms.length < D.rooms.max; i++) {
       const rw = ri(D.rooms.minSize, D.rooms.maxSize);
@@ -45,22 +80,27 @@ export function generateFloor(seed, floor, B, enemySpawnWeights = {}) {
     }
   }
 
-  // 2. 通路でつなぐ（左から順に全部つなぎ、さらに少しループを作る）
-  const hLine = (x0, x1, y) => {
-    for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) carve(x, y);
+  // 2. 通路でつなぐ（左から順に全部つなぎ、さらにループを作る）。通路は幅 cw マス
+  const hLine = (x0, x1, y, cw) => {
+    for (let dy = 0; dy < cw; dy++) {
+      for (let x = Math.min(x0, x1); x <= Math.max(x0, x1) + cw - 1; x++) carve(x, y + dy);
+    }
   };
-  const vLine = (y0, y1, x) => {
-    for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) carve(x, y);
+  const vLine = (y0, y1, x, cw) => {
+    for (let dx = 0; dx < cw; dx++) {
+      for (let y = Math.min(y0, y1); y <= Math.max(y0, y1) + cw - 1; y++) carve(x + dx, y);
+    }
   };
   const connect = (a, b) => {
     const ca = centerOf(a);
     const cb = centerOf(b);
+    const cw = ri(D.corridorWidth.min, D.corridorWidth.max);
     if (rnd() < 0.5) {
-      hLine(ca.x, cb.x, ca.y);
-      vLine(ca.y, cb.y, cb.x);
+      hLine(ca.x, cb.x, ca.y, cw);
+      vLine(ca.y, cb.y, cb.x, cw);
     } else {
-      vLine(ca.y, cb.y, ca.x);
-      hLine(ca.x, cb.x, cb.y);
+      vLine(ca.y, cb.y, ca.x, cw);
+      hLine(ca.x, cb.x, cb.y, cw);
     }
   };
   const order = [...rooms].sort((a, b) => centerOf(a).x - centerOf(b).x);
@@ -95,34 +135,52 @@ export function generateFloor(seed, floor, B, enemySpawnWeights = {}) {
   const stairs = candidates[ri(0, candidates.length - 1)];
   tiles[stairs.y * w + stairs.x] = TILE.STAIRS;
 
-  // 4. 敵の初期位置（開始位置から離れた、部屋の中）
+  // 4. 敵の初期位置（開始位置から離れた、部屋の中）。数体ずつの群れで置く
   const spawnPool = cells.filter(
     (c) => !c.start && c.d >= D.enemyMinDistance && !(c.x === stairs.x && c.y === stairs.y)
   );
-  const count = Math.min(ri(D.enemiesPerFloor.min, D.enemiesPerFloor.max), spawnPool.length);
+  const perFloor = D.enemiesPerFloor;
+  const deeper = (Math.min(Math.max(1, floor), D.floorsPerDungeon) - 1) * (perFloor.perFloor ?? 0);
+  const count = Math.min(ri(perFloor.min + deeper, perFloor.max + deeper), spawnPool.length);
   const enemySpawns = [];
-  const rankWeights = D.enemyRankWeightByFloor[Math.min(Math.max(1, floor), D.floorsPerDungeon)];
-  const configuredSpecies = D.enemySpecies.map((species) => ({
-    species,
-    weight: Math.max(0, Number(enemySpawnWeights[species]
-      ?? rankWeights[ENEMIES_BY_ID[species]?.rank] ?? 0) || 0)
-  }));
-  const configuredTotal = configuredSpecies.reduce((sum, entry) => sum + entry.weight, 0);
-  const weightedSpecies = configuredSpecies.filter((entry) => entry.weight > 0);
-  const totalWeight = weightedSpecies.reduce((sum, entry) => sum + entry.weight, 0);
-  const pickSpecies = () => {
-    let roll = rnd() * totalWeight;
-    for (const entry of weightedSpecies) {
-      roll -= entry.weight;
-      if (roll < 0) return entry.species;
+  const species = speciesPicker(floor, B, enemySpawnWeights);
+  const pickSpecies = () => species.pick(rnd);
+  const taken = new Set();
+  while (species.total > 0 && enemySpawns.length < count && spawnPool.length > 0) {
+    const leader = spawnPool.splice(ri(0, spawnPool.length - 1), 1)[0];
+    if (taken.has(leader.y * w + leader.x)) continue;
+    const pack = [leader];
+    const size = Math.min(count - enemySpawns.length, ri(D.packSize.min, D.packSize.max));
+    const near = spawnPool.filter((c) => Math.max(Math.abs(c.x - leader.x), Math.abs(c.y - leader.y)) <= D.packRadius);
+    while (pack.length < size && near.length > 0) pack.push(near.splice(ri(0, near.length - 1), 1)[0]);
+    for (const c of pack) {
+      const key = c.y * w + c.x;
+      if (taken.has(key)) continue;
+      taken.add(key);
+      enemySpawns.push({ x: c.x, y: c.y, species: pickSpecies() });
     }
-    return weightedSpecies.at(-1)?.species;
-  };
-  for (let i = 0; i < (configuredTotal > 0 ? count : 0); i++) {
-    const k = ri(0, spawnPool.length - 1);
-    const c = spawnPool.splice(k, 1)[0];
-    enemySpawns.push({ x: c.x, y: c.y, species: pickSpecies() });
   }
 
   return { w, h, tiles, rooms, start, stairs: { x: stairs.x, y: stairs.y }, enemySpawns };
+}
+
+// 回想部屋の模擬戦用：ひと部屋だけのアリーナ。主人公は中央寄りの左、敵は画面に収まる距離に二人ずつ並ぶ
+// （隣り合った二人は、絆のこすり合わせが起きやすい）
+export function generateArena(count, { w = 22, h = 15 } = {}) {
+  const tiles = new Uint8Array(w * h);
+  const room = { x: 3, y: 2, w: w - 6, h: h - 4 };
+  for (let y = room.y; y < room.y + room.h; y++) {
+    for (let x = room.x; x < room.x + room.w; x++) tiles[y * w + x] = TILE.FLOOR;
+  }
+  const start = { x: room.x + 3, y: room.y + Math.floor(room.h / 2) };
+  const stairs = { x: room.x, y: room.y };   // 左上の階段 = 回想を終える出口
+  tiles[stairs.y * w + stairs.x] = TILE.STAIRS;
+  // 二人組の置き場所（主人公から 5〜8 マス）
+  const slots = [[6, -2], [7, -2], [6, 2], [7, 2], [9, 0], [10, 0]];
+  const enemySpawns = [];
+  for (let i = 0; i < count; i++) {
+    const [dx, dy] = slots[i % slots.length];
+    enemySpawns.push({ x: Math.min(room.x + room.w - 1, start.x + dx), y: start.y + dy + Math.floor(i / slots.length), index: i });
+  }
+  return { w, h, tiles, rooms: [room], start, stairs, enemySpawns };
 }

@@ -31,6 +31,8 @@ export class DungeonView {
   viewFor(unit) {
     let v = this.views.get(unit.id);
     if (!v) {
+      // 先読みしていないキャラでも、初めて出たときに読み込む（読み終わるまでは色の四角）
+      void loadSpriteSheet(unit.spriteId);
       v = new SpriteActor({ id: unit.spriteId, name: unit.name, x: 0, y: 0, speed: 0, color: unit.color });
       this.views.set(unit.id, v);
     }

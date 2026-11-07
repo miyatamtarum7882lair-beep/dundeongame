@@ -1,4 +1,5 @@
 import { ENEMIES_BY_ID } from './enemies.js';
+import { charmAttrsOf } from './charmAttrs.js';
 
 // 仮置き。タイトルの設定画面で敵ごとに上書きできる画像上の位置（0〜1）。
 export const ATTR_DEFAULT_POINTS = {
@@ -23,67 +24,66 @@ export function clampPoint({ cx, cy, zoom } = {}, range) {
 }
 
 export function defaultPointFor(speciesId, range, attrOverride) {
-  const attr = attrOverride ?? ENEMIES_BY_ID[speciesId]?.attr ?? 'all';
+  const attr = attrOverride ?? charmAttrsOf(speciesId)[0] ?? ENEMIES_BY_ID[speciesId]?.attr ?? 'all';
   const base = ATTR_DEFAULT_POINTS[attr] ?? ATTR_DEFAULT_POINTS.all;
   return clampPoint({ ...base, zoom: range.defaultZoom }, range);
 }
 
-export function getCharmPoint(persistent, speciesId, range) {
+// 保存形式は「配列 [{ attr, cx, cy, zoom }]」。古い「1点だけ」「全」の保存も読めるようにする
+function savedList(persistent, speciesId) {
   const saved = persistent?.charmPoints?.[speciesId];
-  return saved ? clampPoint(saved, range) : defaultPointFor(speciesId, range);
+  if (Array.isArray(saved)) return saved;
+  if (saved && typeof saved === 'object') return [{ attr: 'all', ...saved }];
+  return [];
 }
 
-/** Return all per-enemy points. Legacy single-point saves are upgraded in memory. */
+/** その敵のチャームポイントの数だけ、属性ごとに1点ずつ返す（順番は charmAttrsOf） */
 export function getCharmPoints(persistent, speciesId, range) {
-  const saved = persistent?.charmPoints?.[speciesId];
-  if (Array.isArray(saved)) {
-    const points = saved.map((point) => ({
-      attr: ATTR_DEFAULT_POINTS[point.attr] ? point.attr : 'all',
-      ...clampPoint(point, range)
-    }));
-    return points.length ? points : [defaultPointFor(speciesId, range)];
-  }
-  if (saved && typeof saved === 'object') {
-    return [{ attr: ENEMIES_BY_ID[speciesId]?.attr ?? 'all', ...clampPoint(saved, range) }];
-  }
-  const attr = ENEMIES_BY_ID[speciesId]?.attr ?? 'all';
-  return [{ attr, ...defaultPointFor(speciesId, range, attr) }];
+  const saved = savedList(persistent, speciesId);
+  const attrs = charmAttrsOf(speciesId);
+  // 古い保存：「全」や属性違いで登録していた点は、空いている枠へ順番に割り当てる
+  const leftovers = saved.filter((p) => !attrs.includes(p.attr));
+  return attrs.map((attr) => {
+    const hit = saved.find((p) => p.attr === attr) ?? leftovers.shift();
+    return { attr, ...(hit ? clampPoint(hit, range) : defaultPointFor(speciesId, range, attr)) };
+  });
+}
+
+export function getCharmPoint(persistent, speciesId, range) {
+  const { attr, ...point } = getCharmPoints(persistent, speciesId, range)[0];
+  return point;
 }
 
 export function getCharmPointForAttr(persistent, speciesId, attr, range, skillId = null) {
   return getCharmPointsForAttr(persistent, speciesId, attr, range, skillId)[0];
 }
 
-export function getCharmPointsForAttr(persistent, speciesId, attr, range, skillId = null) {
+/** 技の属性に合うチャームポイント。その属性を持たない敵は、いちばん目のチャームポイント */
+export function getCharmPointsForAttr(persistent, speciesId, attr, range) {
   const points = getCharmPoints(persistent, speciesId, range);
-  // 背面すりすりは敵の手を使う拘束なので、手ポイントがあれば全部表示する。
-  const hands = skillId === 'backRub' ? points.filter((point) => point.attr === 'hand') : [];
-  if (hands.length) return hands.map((point) => clampPoint(point, range));
-  const matching = points.filter((point) => point.attr === attr);
-  if (matching.length) return matching.map((point) => clampPoint(point, range));
-  const all = points.filter((point) => point.attr === 'all');
-  if (all.length) return all.map((point) => clampPoint(point, range));
-  return [defaultPointFor(speciesId, range, attr)];
+  const hit = points.find((p) => p.attr === attr) ?? points[0];
+  const { attr: _a, ...point } = hit;
+  return [point];
 }
 
 export function setCharmPoints(persistent, speciesId, points, range) {
-  const stored = points.map((point) => ({
-    attr: ATTR_DEFAULT_POINTS[point.attr] ? point.attr : 'all',
-    cx: round(clampPoint(point, range).cx, 4),
-    cy: round(clampPoint(point, range).cy, 4),
-    zoom: round(clampPoint(point, range).zoom, 2)
-  }));
+  const attrs = charmAttrsOf(speciesId);
+  const stored = attrs.map((attr) => {
+    const p = points.find((q) => q.attr === attr) ?? { attr, ...defaultPointFor(speciesId, range, attr) };
+    const v = clampPoint(p, range);
+    return { attr, cx: round(v.cx, 4), cy: round(v.cy, 4), zoom: round(v.zoom, 2) };
+  });
   persistent.charmPoints ??= {};
   persistent.charmPoints[speciesId] = stored;
   return stored;
 }
 
 export function setCharmPoint(persistent, speciesId, point, range) {
-  const v = clampPoint(point, range);
-  const stored = { cx: round(v.cx, 4), cy: round(v.cy, 4), zoom: round(v.zoom, 2) };
-  persistent.charmPoints ??= {};
-  persistent.charmPoints[speciesId] = stored;
-  return stored;
+  const attr = charmAttrsOf(speciesId)[0];
+  const others = getCharmPoints(persistent, speciesId, range).filter((p) => p.attr !== attr);
+  const stored = setCharmPoints(persistent, speciesId, [{ attr, ...point }, ...others], range)[0];
+  const { attr: _a, ...rest } = stored;
+  return rest;
 }
 
 export function resetCharmPoint(persistent, speciesId) {

@@ -64,8 +64,9 @@ export function cuesFor(list, at, index = 0, count = 1) {
   return (list ?? []).filter((c) => {
     if (c.at !== at) return false;
     if (at !== 'hit') return true;
-    const from = c.from ?? 0;
-    const to = c.to ?? count - 1;
+    // first / last（数値）で、ヒット番号の範囲を絞る。from / to は位置の指定と区別するため数値のときだけ使う
+    const from = c.first ?? (typeof c.from === 'number' ? c.from : 0);
+    const to = c.last ?? (typeof c.to === 'number' ? c.to : count - 1);
     const every = Math.max(1, Math.floor(c.every ?? 1));
     return index >= from && index <= to && (index - from) % every === 0;
   });

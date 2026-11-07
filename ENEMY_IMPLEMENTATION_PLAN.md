@@ -8,10 +8,18 @@
 
 ## 現在の登録範囲
 
-- 21体のID・名前・ランク・主属性を登録。新規18体の一枚絵と生成済みスプライトを使用できる。
+- 21体のID・名前・ランク・主属性を登録。全員の一枚絵とスプライトを使用できる。
 - 1階は basic のみ、2階は basic と unique、3階は elite も含めて出現する。デバッグ画面で敵別の重みを上書きできる。
-- 新規18体の戦闘は既存の共通通常技・拘束技を仮使用する。固有の特殊技、選択肢、デバフ、会話、進化は未実装。
-- `demonicChinaGirl` の原資料の属性は「胸 / 手」。現在の戦闘上の主属性は胸で、手の扱いは後続で追加する。
+- **21体すべてに固有技を実装済み**（通常技・拘束技・特殊技・上位技・選択肢付き技1つ・蓄積デバフ・台詞・演出・SE）。
+  - 初期3体：`src/data/skills.js` / `skillStages.js` / `enemyDialogue.js`
+  - 前半9体：`skillsWave1.js` / `skillStagesWave1.js` / `enemyDialogueWave1.js`
+  - 後半9体：`skillsWave2.js` / `skillStagesWave2.js` / `enemyDialogueWave2.js`
+  - 蓄積デバフと一時状態：`src/data/conditioning.js`、技ごとの進化：`src/battle/skillEvolution.js`
+- 数値・台詞はすべて仮。実プレイで調整する。
+- 手属性を実装済み。`demonicChinaGirl` は胸（抱擁・弱点看破）と手（ハンド・妖手・お仕置き・搾取）の二つのチャームポイントを持つ。
+- チャームポイントは `src/data/charmAttrs.js` で敵ごとに決まる（「全」の敵は使う技の属性ぶん）。設定画面の枠もこの数だけ。
+- 敵どうしの絆（こすり合わせ・ユナイト攻撃）：`src/battle/pairBond.js`。図鑑・回想部屋・模擬戦・設定：`src/ui/gameMenu.js`（M キー）。
+- お金・貢ぎ・装備・敵からの贈り物（呪いの装備）・アイテム・拠点：`src/battle/economy.js` と `src/data/shopCatalog.js`。商人ちゃんの店：`src/ui/shopView.js`（絵は `work/merchant/` → `npm run sprite -- build merchant`、一枚絵は `public/assets/portraits/merchant.png`）。
 
 ## 実装順序
 

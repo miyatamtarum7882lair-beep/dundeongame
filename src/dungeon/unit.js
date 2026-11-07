@@ -26,6 +26,9 @@ export class Unit {
     this.pendingSkill = null;
     this.bindImmune = false;
     this.cooldown = 0;           // 仲間の技の再使用までのターン数
+    this.choiceCooldown = 0;     // 敵: 次に選択肢を出せるまでのターン数
+    this.stunTurns = 0;          // 敵: ひるんで動けないターン数（力比べで押し返されたなど）
+    this.comboNext = null;       // 敵: 次の行動で優先する連携技
     this.encountered = false;    // 敵: 図鑑に登録済みか
   }
 

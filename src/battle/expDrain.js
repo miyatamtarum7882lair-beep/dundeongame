@@ -8,7 +8,7 @@
  * @param {{needFn:(level:number)=>number, levelUp:{hp:number, mp:number}, minLevel?:number}} opt
  * @returns {{lost:number, levelsLost:number, atFloor:boolean}}
  */
-export function loseHeroExp(hs, amount, { needFn, levelUp, minLevel = 1 }) {
+export function loseHeroExp(hs, amount, { needFn, levelUp, minLevel = 1, keepHp = false }) {
   let left = Math.max(0, Math.round(amount));
   const start = left;
   let levelsLost = 0;
@@ -22,7 +22,8 @@ export function loseHeroExp(hs, amount, { needFn, levelUp, minLevel = 1 }) {
     hs.exp = 0;
     if (hs.level <= minLevel) break;
     hs.level -= 1;
-    hs.maxHp = Math.max(1, hs.maxHp - levelUp.hp);
+    // keepHp: HP は絶頂のときにしか減らない。レベルが下がっても最大HPは据え置き（再び上がったときに二重には増えない）
+    if (!keepHp) hs.maxHp = Math.max(1, hs.maxHp - levelUp.hp);
     hs.maxMp = Math.max(0, hs.maxMp - levelUp.mp);
     // 必要値ちょうどだと次の加算で即レベルアップするため、1手前まで戻す
     hs.exp = Math.max(0, needFn(hs.level) - 1);

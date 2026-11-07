@@ -1,5 +1,7 @@
 import { bindSideOf, placementFor } from './boundCharmMath.js';
 import { buildCharmCanvas } from './charmCanvas.js';
+import { expPopupStyle, expPopupText } from './expPopupStyle.js';
+import { drawShape } from './fxShapes.js';
 
 const smooth = (t) => t * t * (3 - 2 * t);
 
@@ -16,9 +18,15 @@ export class BoundCharmView {
     this.expPopups = [];
   }
 
-  addExpPopup(unit, amount) {
+  // 拘束中に敵が吸い取った経験値。量が多いほど大きく濃く出す（ref は主人公の必要EXP）
+  addExpPopup(unit, amount, ref = 0, fontFamily = 'sans-serif') {
     if (!this.entries.has(unit)) return false;
-    this.expPopups.push({ unit, text: `+${Math.max(1, Math.round(amount))} EXP`, age: 0 });
+    const style = expPopupStyle(amount, ref);
+    const n = this.expPopups.filter((p) => p.unit === unit).length;
+    this.expPopups.push({
+      unit, text: expPopupText(amount), style, age: 0, life: style.life,
+      font: `900 ${style.size}px ${fontFamily}`, jitter: (n % 3 - 1) * 40
+    });
     return true;
   }
 
@@ -57,7 +65,7 @@ export class BoundCharmView {
   update(dt) {
     for (const e of this.entries.values()) e.age += dt;
     for (const popup of this.expPopups) popup.age += dt;
-    this.expPopups = this.expPopups.filter((popup) => popup.age < 1.05 && this.entries.has(popup.unit));
+    this.expPopups = this.expPopups.filter((popup) => popup.age < popup.life && this.entries.has(popup.unit));
   }
 
   draw(g) {
@@ -84,20 +92,39 @@ export class BoundCharmView {
       });
       for (const popup of this.expPopups) {
         if (popup.unit !== e.unit) continue;
-        const t = popup.age / 1.05;
+        const st = popup.style;
+        const t = popup.age / popup.life;
+        const popIn = Math.min(1, popup.age / 0.16);
+        const pop = (0.5 + 0.5 * popIn) * (1 + (1 - popIn) * 0.5 * st.t);
+        const x = base.x + base.size / 2 + popup.jitter;
+        const y = base.y + base.size / 2 - (1 - Math.pow(1 - t, 2)) * st.rise * 1.4;
         g.save();
-        g.globalAlpha = Math.min(1, (1 - t) * 1.8);
-        g.font = 'bold 17px sans-serif';
+        g.translate(x, y);
+        g.scale(pop, pop);
+        g.globalAlpha = Math.max(0, Math.min(1, (1 - t) / 0.3));
+        g.font = popup.font;
         g.textAlign = 'center';
         g.textBaseline = 'middle';
         g.lineJoin = 'round';
-        g.lineWidth = 4;
-        g.strokeStyle = 'rgba(0,0,0,0.9)';
-        g.fillStyle = '#ffd36b';
-        const x = base.x + base.size / 2;
-        const y = base.y + base.size / 2 - t * 42;
-        g.strokeText(popup.text, x, y);
-        g.fillText(popup.text, x, y);
+        g.lineWidth = 4 + st.size * 0.12;
+        g.strokeStyle = 'rgba(70, 0, 36, 0.92)';
+        g.strokeText(popup.text, 0, 0);
+        g.shadowColor = st.glow;
+        g.shadowBlur = 8 + 24 * st.t;
+        g.fillStyle = st.color;
+        g.fillText(popup.text, 0, 0);
+        g.shadowBlur = 0;
+        if (st.hearts > 0) {
+          const w = g.measureText(popup.text).width / 2 + st.size * 0.45;
+          const beat = 1 + 0.15 * Math.sin(popup.age * 14);
+          for (let i = 0; i < st.hearts; i++) {
+            g.save();
+            g.translate((i === 0 ? -1 : 1) * w, 0);
+            g.scale(beat, beat);
+            drawShape(g, 'heart', st.size * 0.36, st.color);
+            g.restore();
+          }
+        }
         g.restore();
       }
     }

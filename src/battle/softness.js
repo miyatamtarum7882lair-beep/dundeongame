@@ -2,9 +2,9 @@
 import { clamp } from '../core/util.js';
 import { ENEMIES_BY_ID, ATTRS } from '../data/enemies.js';
 import { SOFTNESS } from '../data/softness.js';
+import { charmAttrsOf } from '../data/charmAttrs.js';
 
 export const SOFT_TIER_NAMES = { firm: 'しっかり', normal: 'ふつう', soft: 'やわらか', melting: 'とろける' };
-const ALL_ATTRS = ['mouth', 'bust', 'hip', 'foot'];
 
 export function getSoftness(raceId, attr, B) {
   return SOFTNESS[raceId]?.[attr] ?? B.softness.default;
@@ -45,8 +45,7 @@ export function touchChanceAddFor(raceId, attr, B) {
 
 // 図鑑用
 export function buildSoftnessList(raceId, B) {
-  const def = ENEMIES_BY_ID[raceId];
-  const attrs = def.attr === 'all' ? ALL_ATTRS : [def.attr];
+  const attrs = charmAttrsOf(raceId);
   return attrs.map((attr) => {
     const value = getSoftness(raceId, attr, B);
     const tier = softnessTier(value, B);

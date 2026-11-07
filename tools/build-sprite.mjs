@@ -32,6 +32,9 @@ const AUTO_NORMALIZE = new Set([
   'skill_blowKiss', 'skill_pinkBreath', 'skill_sexyPose', 'panic', 'trance',
   'charm', 'bind_down', 'bind_side'
 ]);
+// コマごとに idle の高さへ合わせるモーション（立ったままのポーズ）
+const PER_FRAME_NORMALIZE = new Set(['skill_blowKiss', 'skill_pinkBreath', 'skill_sexyPose']);
+const PER_FRAME_RANGE = [0.8, 1.4];
 const SIZE_TOLERANCE = 0.15;   // idle との高さの差がこの割合を超えたら警告
 const IMAGE_EXTS = ['png', 'webp', 'jpg', 'jpeg'];
 const COMMANDS = ['list', 'prompt', 'build', 'watch'];
@@ -137,23 +140,128 @@ function columnGroups(raw) {
       start = -1;
     }
   }
-  return groups.filter(([a, b]) => b - a + 1 >= GROUP_MIN_WIDTH);
+  return {
+    counts,
+    groups: groups.filter(([a, b]) => b - a + 1 >= GROUP_MIN_WIDTH)
+  };
 }
 
-// 横一列の画像を count コマに切り分ける。見つけた数が合わないときは等分する
-function splitStrip(raw, count, label) {
-  if (count === 1) return [cropBox(raw, 0, raw.width - 1)];
-  const groups = columnGroups(raw);
-  let ranges = groups;
-  if (groups.length !== count) {
-    console.warn(`  注意: ${label} のコマを ${groups.length} 個見つけました（期待は ${count} 個）。等分で切り分けます。ずれるときは、コマの間隔を広げて作り直してください`);
-    const w = raw.width / count;
-    ranges = Array.from({ length: count }, (_, i) => [
-      Math.floor(i * w),
-      Math.max(Math.floor(i * w), Math.floor((i + 1) * w) - 1)
-    ]);
+const SMALL_GROUP_RATIO = 0.12;   // 最大のかたまりの画素数に対して、これ未満は絵の中の効果（ハート・吐息など）とみなす
+
+// 見つけたかたまりの数が合わないときに、count 個へ近づける
+//   多すぎる: 小さなかたまり（描き込まれたハートや吐息）を外し、それでも多ければ隙間の狭い隣どうしを合わせる
+//   少なすぎる: いちばん幅の広いかたまりを、中央付近でいちばん画素の少ない列で2つに割る
+function fitGroups(groups, counts, count) {
+  const mass = ([a, b]) => {
+    let m = 0;
+    for (let x = a; x <= b; x++) m += counts[x];
+    return m;
+  };
+  let list = groups.map((g) => [...g]);
+  if (list.length > count) {
+    const biggest = Math.max(...list.map(mass));
+    const kept = list.filter((g) => mass(g) >= biggest * SMALL_GROUP_RATIO);
+    if (kept.length >= count) list = kept;
   }
-  return ranges.map(([a, b]) => cropBox(raw, a, b));
+  while (list.length > count) {
+    let best = 0;
+    for (let i = 1; i < list.length - 1; i++) {
+      if (list[i + 1][0] - list[i][1] < list[best + 1][0] - list[best][1]) best = i;
+    }
+    list.splice(best, 2, [list[best][0], list[best + 1][1]]);
+  }
+  while (list.length < count && list.length > 0) {
+    let wide = 0;
+    for (let i = 1; i < list.length; i++) {
+      if (list[i][1] - list[i][0] > list[wide][1] - list[wide][0]) wide = i;
+    }
+    const [a, b] = list[wide];
+    // 何コマ分が1つのかたまりになっているかを幅から見積もり、最初の境目で割る
+    const pieces = Math.max(2, count - list.length + 1);
+    const center = a + (b - a + 1) / pieces;
+    const span = (b - a + 1) / pieces * 0.35;
+    let cut = Math.round(center);
+    for (let x = Math.round(center - span); x <= Math.round(center + span); x++) {
+      if (counts[x] < counts[cut]) cut = x;
+    }
+    list.splice(wide, 1, [a, cut - 1], [cut, b]);
+  }
+  return list;
+}
+
+const STRAY_RATIO = 0.15;   // 最大の塊に対して、これ未満の大きさで、体の横幅の外にある塊は消す
+
+// コマの範囲 x0〜x1 で、キャラの横に離れて描かれた小さな効果（ハート・吐息・汗など）を消す。
+// 体の上にある物（天使の輪・耳など）は、体の横幅の内側にあるので残る
+function removeStrays(raw, x0, x1) {
+  const { data, width, height } = raw;
+  const w = x1 - x0 + 1;
+  const label = new Int32Array(w * height).fill(-1);
+  const comps = [];
+  const stack = [];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (label[i] >= 0 || data[(y * width + x0 + x) * 4 + 3] === 0) continue;
+      const comp = { size: 0, minX: x, maxX: x, sumX: 0, pixels: [] };
+      label[i] = comps.length;
+      stack.push(i);
+      while (stack.length) {
+        const j = stack.pop();
+        const jx = j % w;
+        const jy = (j - jx) / w;
+        comp.size += 1;
+        comp.sumX += jx;
+        comp.pixels.push(j);
+        if (jx < comp.minX) comp.minX = jx;
+        if (jx > comp.maxX) comp.maxX = jx;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = jx + dx;
+            const ny = jy + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= height) continue;
+            const k = ny * w + nx;
+            if (label[k] >= 0 || data[(ny * width + x0 + nx) * 4 + 3] === 0) continue;
+            label[k] = comps.length;
+            stack.push(k);
+          }
+        }
+      }
+      comps.push(comp);
+    }
+  }
+  if (comps.length < 2) return;
+  const main = comps.reduce((a, b) => (b.size > a.size ? b : a));
+  for (const c of comps) {
+    if (c === main || c.size >= main.size * STRAY_RATIO) continue;
+    const cx = c.sumX / c.size;
+    if (cx >= main.minX && cx <= main.maxX) continue;
+    for (const j of c.pixels) {
+      const jx = j % w;
+      const jy = (j - jx) / w;
+      data[(jy * width + x0 + jx) * 4 + 3] = 0;
+    }
+  }
+}
+
+// 横一列の画像を count コマに切り分ける。見つけた数が合わないときは fitGroups で合わせる
+function splitStrip(raw, count, label) {
+  const frames = splitRanges(raw, count, label);
+  return frames.map(([a, b]) => {
+    removeStrays(raw, a, b);
+    return cropBox(raw, a, b);
+  });
+}
+
+function splitRanges(raw, count, label) {
+  const { groups, counts } = columnGroups(raw);
+  if (count === 1) {
+    // 1コマでも、離れて描かれた小さな効果は外す（キャラが小さく縮むのを防ぐ）
+    return groups.length ? fitGroups(groups, counts, 1) : [[0, raw.width - 1]];
+  }
+  if (groups.length === count) return groups;
+  console.warn(`  注意: ${label} のコマを ${groups.length} 個見つけました（期待は ${count} 個）。自動で ${count} 個に合わせます。ずれるときは、コマの間隔を広げて作り直してください`);
+  return fitGroups(groups, counts, count);
 }
 
 // ---- コマの加工 ----
@@ -172,8 +280,40 @@ function calcFeetX(data, w, h) {
   return count ? sumX / count : (w - 1) / 2;
 }
 
-async function scaleFrame(frame, scale) {
+const BODY_COLUMN_RATIO = 0.35;   // 縦に画素がこの割合以上ある列を「体」とみなす
+
+// 横に長い絵（吐息・差し出したハートなど）は、縮めずに体のまわりだけを残す。
+// 体の大きさが他のコマとそろい、はみ出した効果の先だけがコマの端で切れる
+function cropToBody(frame, scale) {
+  const counts = new Uint32Array(frame.width);
+  for (let y = 0; y < frame.height; y++) {
+    for (let x = 0; x < frame.width; x++) {
+      if (frame.buf[(y * frame.width + x) * 4 + 3] > 0) counts[x] += 1;
+    }
+  }
+  const max = Math.max(...counts);
+  let first = 0;
+  let last = frame.width - 1;
+  while (first < last && counts[first] < max * BODY_COLUMN_RATIO) first += 1;
+  while (last > first && counts[last] < max * BODY_COLUMN_RATIO) last -= 1;
+  // 体の中心から左右それぞれ、コマの半分の幅まで（片側だけはみ出す絵にも効く）
+  const half = (FRAME_W - 2) / 2 / scale;
+  const center = (first + last) / 2;
+  const x0 = Math.max(0, Math.round(center - half));
+  const x1 = Math.min(frame.width, Math.round(center + half));
+  if (x0 === 0 && x1 === frame.width) return frame;
+  const window = x1 - x0;
+  const buf = Buffer.alloc(window * frame.height * 4);
+  for (let y = 0; y < frame.height; y++) {
+    const src = (y * frame.width + x0) * 4;
+    frame.buf.copy(buf, y * window * 4, src, src + window * 4);
+  }
+  return { buf, width: window, height: frame.height };
+}
+
+async function scaleFrame(source, scale) {
   // 元絵の余白や足元の偏りで64×96から切れないよう、必要なコマだけ縮める。
+  const frame = cropToBody(source, scale);
   let size = scale;
   for (let attempt = 0; attempt < 12; attempt++) {
     const w = Math.max(1, Math.round(frame.width * size));
@@ -251,6 +391,14 @@ async function build(id) {
     return idleRaw.height / avg;
   };
 
+  // 立ったままの特殊技は、元絵でコマごとに大きさが違うことがあるので、1コマずつ idle の高さに合わせる。
+  // 手を上げたポーズなどで極端にならないよう、モーション全体の縮尺の PER_FRAME_RANGE 倍に収める
+  const frameScale = (mid, src, scale) => {
+    if (!idleRaw || !PER_FRAME_NORMALIZE.has(mid) || scaleOverrides[mid]) return scale;
+    const own = baseScale * (idleRaw.height / src.height);
+    return Math.min(scale * PER_FRAME_RANGE[1], Math.max(scale * PER_FRAME_RANGE[0], own));
+  };
+
   // 3. シートに並べるコマを作る
   const frames = [];
   const tags = {};
@@ -280,7 +428,7 @@ async function build(id) {
           frame = idleFrame ? { ...idleFrame, measured: false } : null;
         } else if ((match = token.match(/^d(\d+)$/))) {
           const src = drawn.get(mid)?.[Number(match[1]) - 1];
-          if (src) frame = { ...(await scaleFrame(src, scale)), label };
+          if (src) frame = { ...(await scaleFrame(src, frameScale(mid, src, scale))), label };
         } else if ((match = token.match(/^=(\d+)$/))) {
           frame = local[Number(match[1]) - 1] ?? null;
         } else if ((match = token.match(/^~(\d+)$/))) {

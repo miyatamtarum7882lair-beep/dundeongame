@@ -26,7 +26,8 @@ export const B = deepFreeze({
     zoomStep: 0.05,
     defaultZoom: 2,
     centerTransparency: 0.4,
-    innerRatio: 0.45,
+    innerRatio: 0.68,      // 中心（はっきり見える範囲）の広さ。0〜1
+    edgeSharpness: 1.8,    // 大きいほど、中心の外ですぐ消える
     sizePx: 700,
     offsetPx: 210,
     sideOffsetPx: 310,
@@ -82,12 +83,16 @@ export const B = deepFreeze({
     rate: { sword: 0.13, fist: 0.22 },
     levelDiffRate: 0.06,
     guardMul: 0.5,
+    guardEvade: 0.15,          // 防御中の、回避できる技への回避率の上乗せ
     beatSec: 0.2,
-    baseWeights: { move: 3, attack: 3, bind: 2, special: 1 },
+    baseWeights: { move: 3, attack: 3, bind: 2, special: 1, idle: 0.6 },   // idle: 何もしない（様子見）
+    comboChance: 0.75,         // 連携技を次の行動で使う確率
+    idleTalkChance: 0.4,       // 敵が様子見したとき、台詞を言う確率
     drainPerLevel: 0.10,
     exp: { base: 12, perEnemyLevel: 6, need: 30, needPerLevel: 20 },
     levelUp: { hp: 10, mp: 8, healRate: 0.3 },
     regenRate: 0.01,
+    hpToMpRate: 0.6,        // 絶頂以外の打撃は HP を減らさず、最大HP比 × この率 の MP を奪う
     defeatResistDrop: 5,
     touch: { mpRate: 0.08, resistDrop: 3 }
   },
@@ -118,13 +123,187 @@ export const B = deepFreeze({
     deepDrainKiss: { mpRate: 0.18, range: 4, windup: true },
     foxPounce: { hpRate: 0.16, mpRate: 0.08, range: 3, windup: true },
     sexyPose: { mpRate: 0.04, range: 3, allyCharm: 10, windup: true },
-    drainBerochu: { expRate: 0.05, range: 1, windup: true, allyCharm: 18 }
+    drainBerochu: { expRate: 0.05, range: 1, windup: true, allyCharm: 18 },
+    // evade: 基本の回避率。主人公の状態（油断・体勢崩しなど）で下がる
+    // 小悪魔キトゥン
+    kittenTouch: { hpRate: 0.10, mpRate: 0.03, range: 1 },
+    kittenKissHold: { mpRate: 0.12, range: 1 },
+    kittenTease: { mpRate: 0.02, range: 3, evade: 0.2, allyCharm: 6 },
+    kittenBlowKiss: { mpRate: 0.06, range: 4, windup: true, evade: 0.3, allyCharm: 8, carelessBonus: 1.6 },
+    kittenDare: { mpRate: 0.04, range: 2, windup: true, allyCharm: 10 },
+    kittenFullTemptation: { mpRate: 0.2, expRate: 0.06, range: 1, windup: true, allyCharm: 20 },
+    // 黒髪リボンちゃん
+    ribbonTouch: { hpRate: 0.10, mpRate: 0.03, range: 1 },
+    peachBreathHold: { mpRate: 0.12, range: 1 },
+    peachBreath: { mpRate: 0.05, range: 3, windup: true, evade: 0.25, allyCharm: 12 },
+    sweetWhisper: { mpRate: 0.02, range: 3, evade: 0.15, allyCharm: 6 },
+    closeBreath: { mpRate: 0.09, range: 1, windup: true, allyCharm: 10 },
+    supremePeachBreath: { mpRate: 0.16, range: 3, windup: true, evade: 0.1, allyCharm: 18 },
+    // ピンク髪きつねちゃん
+    foxStep: { hpRate: 0.12, range: 1 },
+    foxBackRub: { mpRate: 0.12, range: 1 },
+    foxHipAttack: { hpRate: 0.14, mpRate: 0.04, range: 1, windup: true, evade: 0.25, allyCharm: 8 },
+    foxPushContest: { hpRate: 0.04, mpRate: 0.03, range: 1, allyCharm: 8 },
+    tailFeint: { hpRate: 0.03, range: 1, evade: 0.1 },
+    foxHipPress: { hpRate: 0.10, mpRate: 0.2, range: 1, windup: true, allyCharm: 20 },
+    // ---- 前半9体 ----
+    // backBonus: 主人公の背後からだと吸収が増える / bonusWhen: 主人公がその状態だと吸収が増える / healRate: 回復の割合
+    // シーフちゃん
+    thiefSlip: { hpRate: 0.08, expRate: 0.006, range: 1 },
+    thiefHold: { mpRate: 0.11, range: 1 },
+    thiefPeek: { mpRate: 0.02, range: 3, evade: 0.2, allyCharm: 6 },
+    heartThief: { mpRate: 0.03, expRate: 0.03, range: 3, windup: true, evade: 0.3, allyCharm: 10 },
+    backstabSteal: { hpRate: 0.04, expRate: 0.02, range: 1, backBonus: 2.0, bonusWhen: { status: 'feinted', mul: 1.4 } },
+    heartjackMaster: { mpRate: 0.1, expRate: 0.08, range: 2, windup: true, allyCharm: 20 },
+    // ミクちゃん
+    mikuPechi: { hpRate: 0.09, mpRate: 0.03, range: 1 },
+    mikuBegKiss: { mpRate: 0.12, range: 1 },
+    mikuPlease: { mpRate: 0.02, range: 3, evade: 0.15, allyCharm: 6 },
+    mikuBlowKiss: { mpRate: 0.07, range: 4, windup: true, evade: 0.3, allyCharm: 10 },
+    mikuSpecialKiss: { mpRate: 0.2, expRate: 0.04, range: 1, windup: true, allyCharm: 20 },
+    // おねだりバニー
+    bunnyPunch: { hpRate: 0.10, range: 1 },
+    pleadStealKiss: { mpRate: 0.10, range: 1 },
+    pleadPlease: { mpRate: 0.03, range: 2, evade: 0.2, allyCharm: 8 },
+    sneakyTaste: { mpRate: 0.02, expRate: 0.015, range: 1, bonusWhen: { status: 'hesitant', mul: 1.8 } },
+    secretRewardKiss: { mpRate: 0.12, expRate: 0.06, range: 1, windup: true, allyCharm: 18 },
+    // 天使ちゃん
+    angelTouch: { hpRate: 0.10, mpRate: 0.03, range: 1 },
+    angelHug: { mpRate: 0.12, range: 1 },
+    holyLullaby: { mpRate: 0.04, range: 5, windup: true, evade: 0.25, allyCharm: 6 },
+    sweetBlessing: { mpRate: 0.02, healRate: 0.08, range: 3, allyCharm: 8 },
+    mercyEye: { mpRate: 0.03, range: 3, windup: true, evade: 0.2, allyCharm: 10 },
+    fallenBlessing: { mpRate: 0.2, expRate: 0.04, range: 3, windup: true, allyCharm: 20 },
+    // グラマーバニーさん
+    bunnyPress: { hpRate: 0.12, mpRate: 0.03, range: 1 },
+    pafuHold: { mpRate: 0.13, range: 1 },
+    pafupafu: { mpRate: 0.08, range: 1, windup: true, allyCharm: 12 },
+    sweetSqueeze: { mpRate: 0.03, range: 1, allyCharm: 6 },
+    gazeLock: { mpRate: 0.02, range: 4, windup: true, evade: 0.25, allyCharm: 8 },
+    queensPafu: { mpRate: 0.22, range: 1, windup: true, allyCharm: 22 },
+    // 青髪ギャル
+    muchiTackle: { hpRate: 0.12, range: 1 },
+    muchiHold: { mpRate: 0.11, range: 1 },
+    galPamper: { mpRate: 0.02, range: 1, allyCharm: 6 },
+    muchiPress: { hpRate: 0.10, mpRate: 0.04, range: 1, windup: true, evade: 0.2, allyCharm: 8 },
+    thighCushion: { mpRate: 0.06, range: 1, windup: true, allyCharm: 10 },
+    muchiParadise: { mpRate: 0.22, range: 1, windup: true, allyCharm: 22 },
+    // シスターさん
+    holyStep: { hpRate: 0.10, mpRate: 0.03, range: 1 },
+    sinShackle: { mpRate: 0.11, range: 1 },
+    countdown: { mpRate: 0.14, expRate: 0.05, range: 1, windup: true, allyCharm: 16 },
+    repent: { mpRate: 0.02, range: 3, windup: true, evade: 0.2, allyCharm: 6 },
+    featherConfess: { mpRate: 0.07, range: 5, windup: true, evade: 0.25, allyCharm: 8 },
+    judgmentCount: { mpRate: 0.24, expRate: 0.08, range: 1, windup: true, allyCharm: 24 },
+    // 夢見のお姉さん
+    sleepyTouch: { hpRate: 0.08, mpRate: 0.03, range: 1 },
+    lapPillow: { mpRate: 0.11, range: 1 },
+    lullaby: { mpRate: 0.03, range: 3, windup: true, allyCharm: 8 },
+    dreamPamper: { mpRate: 0.03, range: 1, allyCharm: 6 },
+    fluffyDream: { mpRate: 0.06, range: 5, windup: true, evade: 0.25, allyCharm: 8, bonusWhen: { status: 'asleep', mul: 1.8 } },
+    eternalLap: { mpRate: 0.22, range: 1, windup: true, allyCharm: 22 },
+    // キスハンター
+    hunterTouch: { hpRate: 0.10, mpRate: 0.03, range: 1 },
+    huntersKiss: { mpRate: 0.12, range: 1 },
+    heartMarking: { mpRate: 0.02, range: 6, windup: true, evade: 0.3, allyCharm: 6 },
+    hunterDrainKiss: { mpRate: 0.04, expRate: 0.03, range: 1, windup: true, allyCharm: 12, bonusWhen: { status: 'marked', mul: 1.6 } },
+    cantEscape: { mpRate: 0.05, range: 4, evade: 0.2, allyCharm: 8, bonusWhen: { status: 'marked', mul: 1.4 } },
+    perfectHuntKiss: { mpRate: 0.18, expRate: 0.06, range: 1, windup: true, allyCharm: 22 },
+    // ---- 後半9体 ----
+    // collectMul: 魔力漏出で漏れた分の、まとめて回収する倍率
+    // 小悪魔お嬢さん
+    ladyTouch: { hpRate: 0.10, mpRate: 0.03, range: 1 },
+    ladysHold: { mpRate: 0.12, range: 1 },
+    ladyWarning: { mpRate: 0.03, range: 3, allyCharm: 8 },
+    ladyStep: { hpRate: 0.06, mpRate: 0.04, range: 4, windup: true, evade: 0.25, allyCharm: 8 },
+    ladyGaze: { mpRate: 0.05, range: 3, windup: true, evade: 0.2, allyCharm: 10, bonusWhen: { status: 'careless', mul: 1.5 } },
+    royalTemptation: { mpRate: 0.22, range: 3, windup: true, allyCharm: 22 },
+    // 甘やかしレディ
+    pamperStep: { hpRate: 0.09, mpRate: 0.04, range: 1 },
+    pamperLegHold: { mpRate: 0.12, range: 1 },
+    tiredDarling: { mpRate: 0.03, range: 3, allyCharm: 8 },
+    gentlePat: { mpRate: 0.03, range: 1, windup: true, allyCharm: 8 },
+    sweetShackle: { mpRate: 0.06, range: 1, windup: true, evade: 0.2, allyCharm: 10 },
+    supremePamperLeg: { mpRate: 0.24, range: 1, windup: true, allyCharm: 22, bonusWhen: { status: 'dependent', mul: 1.4 } },
+    // 怪力バニーさん
+    powerPunch: { hpRate: 0.15, range: 1 },
+    powerHold: { mpRate: 0.14, range: 1 },
+    bunnyRocket: { hpRate: 0.12, mpRate: 0.03, range: 5, windup: true, evade: 0.35, allyCharm: 10, bonusWhen: { status: 'flinch', mul: 1.3 } },
+    dokkanHip: { hpRate: 0.14, mpRate: 0.03, range: 1, windup: true, evade: 0.25, allyCharm: 8 },
+    contestDare: { hpRate: 0.04, mpRate: 0.04, range: 2, allyCharm: 8 },
+    superBunnyRocket: { hpRate: 0.16, mpRate: 0.08, range: 6, windup: true, evade: 0.25, allyCharm: 18 },
+    // 銀狐メイドさん
+    maidStep: { hpRate: 0.09, mpRate: 0.04, range: 1 },
+    manaStomp: { mpRate: 0.13, range: 1 },
+    manaLeakProc: { mpRate: 0.02, range: 3, windup: true, evade: 0.2, allyCharm: 6 },
+    badManners: { mpRate: 0.03, range: 1, allyCharm: 6 },
+    periodicCollect: { mpRate: 0.03, range: 2, windup: true, allyCharm: 12, collectMul: 1.5 },
+    totalManaCollect: { mpRate: 0.15, range: 2, windup: true, allyCharm: 22, collectMul: 2.5 },
+    // ベルベットバニー
+    hipPush: { hpRate: 0.13, range: 1 },
+    velvetPress: { mpRate: 0.13, range: 1 },
+    heartStamp: { hpRate: 0.08, mpRate: 0.05, range: 1, windup: true, evade: 0.2, allyCharm: 10, bonusWhen: { status: 'cornered', mul: 1.5 } },
+    provokeGaze: { mpRate: 0.03, range: 3, evade: 0.2, allyCharm: 8 },
+    hipWall: { hpRate: 0.06, mpRate: 0.04, range: 3, windup: true, evade: 0.2, allyCharm: 10 },
+    queensPressure: { hpRate: 0.08, mpRate: 0.22, range: 1, windup: true, allyCharm: 22 },
+    // ぽしょぽしょ悪魔ちゃん
+    sneakyTouch: { hpRate: 0.08, mpRate: 0.04, range: 1 },
+    whisperHug: { mpRate: 0.12, range: 1 },
+    poshoWhisper: { mpRate: 0.03, range: 3, allyCharm: 8 },
+    secretInsult: { mpRate: 0.04, range: 1, windup: true, allyCharm: 8 },
+    secretLevelDrain: { mpRate: 0.03, expRate: 0.03, range: 1, windup: true, allyCharm: 12, bonusWhen: { status: 'unfocused', mul: 1.6 } },
+    absoluteWhisper: { mpRate: 0.2, expRate: 0.05, range: 1, windup: true, allyCharm: 22 },
+    // 魔性のチャイナ娘（elite）
+    devilHand: { hpRate: 0.10, mpRate: 0.03, expRate: 0.006, range: 1 },
+    demonicHug: { mpRate: 0.12, range: 1 },
+    weakSpotFound: { mpRate: 0.03, range: 3, evade: 0.25, allyCharm: 8 },
+    mysticHandDrain: { mpRate: 0.04, expRate: 0.06, range: 1, windup: true, allyCharm: 14, bonusWhen: { status: 'weakExposed', mul: 1.5 } },
+    zakoPunish: { hpRate: 0.10, mpRate: 0.05, range: 1, windup: true, evade: 0.2, allyCharm: 10 },
+    demonicExpHarvest: { mpRate: 0.15, expRate: 0.12, range: 1, windup: true, allyCharm: 24 },
+    // 桜の妖女（elite）
+    sakuraPush: { hpRate: 0.12, mpRate: 0.03, range: 1 },
+    sakuraHipHold: { mpRate: 0.14, range: 1 },
+    sakuraStorm: { mpRate: 0.05, range: 4, windup: true, evade: 0.25, allyCharm: 12 },
+    corruptionMark: { mpRate: 0.03, range: 3, windup: true, evade: 0.25, allyCharm: 8 },
+    sakuraExpHunt: { mpRate: 0.04, expRate: 0.05, range: 1, windup: true, allyCharm: 14, bonusWhen: { status: 'flowerMark', mul: 1.6 } },
+    thousandSakura: { mpRate: 0.24, expRate: 0.06, range: 4, windup: true, allyCharm: 26 },
+    // ずるっこ悪魔ちゃん（elite）
+    sneakyKick: { hpRate: 0.11, mpRate: 0.03, range: 1 },
+    devilLegHold: { mpRate: 0.13, range: 1 },
+    footTrap: { range: 3, allyCharm: 4 },
+    legDrain: { mpRate: 0.04, expRate: 0.05, range: 1, windup: true, allyCharm: 14, bonusWhen: { status: 'offBalance', mul: 1.5 } },
+    fakeCry: { mpRate: 0.02, range: 2, allyCharm: 8 },
+    devilsLegTrap: { mpRate: 0.18, expRate: 0.05, range: 1, windup: true, allyCharm: 22 }
   },
+  // ずるっこ悪魔ちゃんの罠：仕掛ける範囲・消えるまでのターン数・踏んだときの蓄積
+  traps: { radius: 2, lifeTurns: 15, condGain: 1.5, max: 8 },
+  // カウントダウンの中断（「集中して中断する」を選んだとき）
+  interrupt: { base: 0.6, perLevel: 0.02, min: 0.2, max: 0.9 },
+  // 技の進化（v5）。進化した技の威力と、蓄積デバフの増え方
+  skillEvolution: { powerMul: 1.3, condMul: 1.5 },
+  // 主人公の蓄積デバフ（v4）。値はすべて仮
+  conditioning: {
+    max: 8,
+    warnAt: 3,
+    onsetAt: 5,
+    dangerAt: 7,
+    decayEveryTurns: 8,       // 発生源の敵が近くにいないと、このターン数ごとに1減る
+    floorCarry: 0.5,          // 次の階へ持ち越す割合
+    permanentOnsets: 3,       // 別の階での発症がこの回数で、永続段階が1つ進む
+    maxStage: 4,
+    stageGainMul: 0.2,        // 永続段階1つごとの、ゲージの増え方の上乗せ
+    stageFloor: 1,            // 永続段階1つごとの、ゲージの下限
+    recoveryNeed: [4, 6, 8, 10],  // 段階 I〜IV を1つ下げるのに必要な対抗行動の回数
+    nearRange: 4
+  },
+  // 力比べ（ピンク髪きつねちゃん）
+  contest: { base: 0.55, perLevel: 0.02, offBalancePenalty: 0.15, perGauge: 0.03, min: 0.15, max: 0.85 },
   debuffPanel: {
     columns: 3,
     chipW: 180,
     chipH: 34,
     gap: 6,
+    rowGap: 16,           // 行の間。下に垂れる雫のぶん広めにとる
     maxRows: 8,
     majorFrom: 0.55
   },
@@ -143,9 +322,10 @@ export const B = deepFreeze({
     clicksPerSec: 5
   },
   bound: {
-    tickSec: 2,               // 拘束中の1ターン
-    pulseSec: 3,              // ドレインパルスの基本間隔
-    firstPulseDelaySec: 1.0,  // 拘束成立から最初のパルスまで
+    tickSec: 2,               // 拘束中の1ターン（状態異常・バフの経過）
+    moveSec: 0.5,             // 拘束中、まわりの敵が動く間隔（拘束に加わりやすくする）
+    pulseSec: 1.2,            // ドレインパルスの基本間隔（1回の吸収量は間隔に比例。毎秒の吸収量は同じ）
+    firstPulseDelaySec: 0.6,  // 拘束成立から最初のパルスまで
     pulseStaggerSec: 0.35,    // 拘束役ごとにパルスをずらす間隔
     mpPerSec: 7,
     expBase: 200,
@@ -186,7 +366,102 @@ export const B = deepFreeze({
     startHpLossRate: 0.3,
     extendPerBinderSec: 5,
     extendMaxPerClimaxSec: 5,
-    extraBinderDrainMult: 0.5
+    extraBinderDrainMult: 0.5,
+    // 絶頂の瞬間の、まとめての吸い上げ（「現在レベルの必要EXP」に対する割合）
+    startDrain: { expRate: 0.9, perBinder: 0.35, perCount: 0.15, countCap: 1.0, shareMul: 1.2 }
+  },
+  // 敵どうしの絆（チャームポイントのこすり合わせ）。時間はリアルタイムの秒
+  pairBond: {
+    durationSec: 30,
+    stages: [10, 20],         // 能力上昇 → 負け癖の共有・部位の技の強化
+    startChance: 0.22,        // 主人公の1ターンごと、隣り合った二人が始める確率
+    bindStartChance: 0.12,    // 拘束中（1秒あたり）
+    maxActive: 2,
+    range: 12,                // 主人公からこの距離までの敵だけ（見せるため）
+    pulseSec: 1.3,
+    levelGain: 2,
+    powerMul: 1.15,
+    skillMul: 1.3,
+    completePowerMul: 1.25,
+    familiarSpeedPerBond: 0.25,   // 前に絆を結んだ二人は早い
+    familiarSpeedCap: 1.0
+  },
+  // ユナイト攻撃（絆を結んだ二人の連携）
+  unite: {
+    chance: 0.45,
+    partnerRange: 2,          // 相方が主人公からこの距離にいれば
+    cooldownTurns: 6,
+    mpRate: 0.22,
+    expRate: 0.35,
+    condGain: 1.2,
+    bindDrainMul: 1.3
+  },
+  // ---- お金・貢ぎ・装備・アイテム ----
+  economy: {
+    killGold: { base: 6, perLevel: 2 },     // 敵を倒したときの所持金
+    // 盗む技：所持金の割合と、アイテムを1つ盗む確率
+    steal: {
+      thiefSlip: { gold: 0.08 },
+      backstabSteal: { gold: 0.25, item: 0.35 },
+      heartThief: { gold: 0.2, item: 0.2 },
+      heartjackMaster: { gold: 0.4, item: 0.5 },
+      sneakyTaste: { gold: 0.15 },
+      secretLevelDrain: { gold: 0.1 }
+    },
+    gearWearPerPulse: 1,         // 拘束の吸収1回ごとに、その部位の装備が溶かされる量
+    perfumeTurns: 20,
+    perfumeExpMul: 1.5,
+    manaVialRate: 0.4,
+    incenseDrop: 3
+  },
+  // 拘束中のおねだりに「お金を差し出す」（貢ぎ）
+  tribute: {
+    rate: 0.3,                   // 所持金のこの割合を差し出す
+    min: 10,
+    escapeGain: 0.45,            // 脱出の進みがこの割合だけ進む
+    expPerGold: 1.5,             // 貢いだ額 × この値の経験値を敵が得る（レベルが上がる）
+    drainPerGold: 0.0004,        // 貢いだ累計 × この値だけ、その種族の吸収が強くなる
+    drainCap: 0.6
+  },
+  // 敵からの贈り物（呪いの装備）
+  gifts: {
+    chance: { accept: 0.4, timeout: 0.55, request: 0.3 },
+    maxLevel: 3,
+    drainPerLevel: 0.2,          // その種族の吸収 +20%/段
+    escapePerLevel: 0.1,         // その種族の拘束の脱出必要数 +10%/段
+    resistDownPerLevel: 6,       // その部位の耐性 -6/段
+    expBonusPerLevel: 0.15,      // 恩恵：倒した敵の経験値 +15%/段
+    goldBonusPerLevel: 0.2,      // 恩恵：拾うお金 +20%/段
+    acheChancePerLevel: 0.2      // 階の始まりに、その種族の負け癖が進む確率/段
+  },
+  // 商人ちゃん
+  merchant: {
+    floorChance: 0.7,
+    corruptionPriceMul: 0.12,    // 堕ち度1段ごとの値上がり
+    expPerGold: 2,               // 経験値で払うときの換算
+    dealDiscount: 0.5,           // 負け癖を差し出したときの値引き
+    removeGift: { base: 120, perLevel: 80 },
+    buyBackMul: 2
+  },
+  // 拠点（雪辱ポイント）
+  baseCamp: {
+    rpOnDefeat: { base: 10, perFloor: 5, perClimax: 2 },
+    rpOnClear: 60
+  },
+  // 敗北の搾取（ゲームオーバー時）
+  defeatHarvest: {
+    range: 7,               // 見えていなくても、この距離の敵は集まってくる
+    maxEnemies: 6,
+    expRate: 3.0,           // 「現在レベルの必要EXP」× この値を、全員で吸い尽くす
+    perEnemy: 0.3,          // まわりの敵1体ごとの上乗せ
+    waves: 3,
+    firstWaveSec: 1.0,
+    waveGapSec: 0.75,
+    shareMul: 1.5,          // 敵が得る経験値の倍率
+    bystanderLoseChance: 0.6,   // 一緒にいた別種族の負け癖も進む確率
+    resistDrop: 2,
+    maxResistAttrs: 3,
+    tailSec: 1.6
   },
   erosion: {
     limit: 100,
@@ -273,7 +548,8 @@ export const B = deepFreeze({
 
   // ---- 音 ----
   audio: {
-    maxVoices: 8,
+    maxVoices: 16,
+    muffleMinHz: 650,         // 両耳をふさがれたときに、周りの音がここまでこもる
     pitchJitter: 0.06,
     allyGain: 0.7,
     fileExts: ['ogg', 'mp3', 'wav']
@@ -288,11 +564,14 @@ export const B = deepFreeze({
   },
   // ---- 探索（ステップ1）----
   dungeon: {
-    width: 56,
-    height: 40,
+    width: 66,
+    height: 46,
     floorsPerDungeon: 3,
-    rooms: { min: 6, max: 10, attempts: 80, minSize: 4, maxSize: 9 },
-    extraCorridorRate: 0.34,
+    // 複数の敵に囲まれやすいよう、広めの部屋と大広間、幅の広い通路にする
+    rooms: { min: 6, max: 9, attempts: 120, minSize: 6, maxSize: 11 },
+    halls: { min: 1, max: 2, minW: 13, maxW: 17, minH: 9, maxH: 12 },   // 大広間
+    corridorWidth: { min: 2, max: 3 },
+    extraCorridorRate: 0.5,
     fovRadius: 7,
     roomLit: true,
     enemySpecies: ENEMIES.map((enemy) => enemy.id),
@@ -302,7 +581,16 @@ export const B = deepFreeze({
       2: { basic: 1, unique: 0.25, elite: 0 },
       3: { basic: 0.55, unique: 0.8, elite: 0.6 }
     },
-    enemiesPerFloor: { min: 3, max: 5 },
+    enemiesPerFloor: { min: 8, max: 11, perFloor: 2 },   // 階が深いほど perFloor ずつ増える
+    packSize: { min: 2, max: 4 },     // 敵は数体ずつの群れで置く
+    packRadius: 2,
+    // 時間がたつと、見えない所から敵が増える（maxEnemies まで）
+    reinforce: { everyTurns: 12, maxEnemies: 16, minPathDist: 10 },
+    // 拘束されると、声を聞きつけた敵が見えない所から来る。bindAggroRange 以内の敵も気づいて寄ってくる
+    bindCall: { min: 1, max: 2, minPathDist: 5, maxPathDist: 12 },
+    bindAggroRange: 18,
+    // 大広間の待ち伏せ：入ると MP が mpRestore だけ戻り、縁に min〜max 体の敵が現れる
+    ambush: { min: 3, max: 5, minDistance: 4, mpRestore: 0.25 },
     enemyMinDistance: 7,
     aggroRange: 9,
     wanderChance: 0.5,
@@ -350,6 +638,37 @@ export const B = deepFreeze({
     fadeHoldSec: 4
   },
   cursor: { heartColor: '#ff4fa3', size: 32 },
+  expPopup: { mergeSec: 0.25 },
+  // 拘束中のおねだり（数値は仮）
+  bindRequest: {
+    firstSec: 4,             // 拘束されてから最初のおねだりまで
+    everySec: 7,             // 次のおねだりまで
+    timeoutSec: 3.5,         // 答えないと受け入れたことになる
+    acceptPushback: 0.3,     // 受け入れると、脱出の進みがこの割合だけ戻る
+    acceptSurrender: 0.12,   // 受け入れると、降参の度合いが増える
+    blissSec: 4,             // 受け入れたあと、甘い演出が強まる時間
+    refuseSec: 4,            // 拒んだあと、吸われる量が増える時間
+    refuseDrainMul: 1.4,
+    lowMpWhisperRatio: 0.25  // MPがこの割合を下回ると、拘束役が囁く
+  },
+  // 前に負けた敵と再会したときの煽り。負けた回数がこの数以上で、段階が上がる
+  encounterTaunt: { tiers: [1, 3, 6] },
+  // 堕ち度の表示（ハートの刻印）。mood が最大のとき、画面の縁がこの濃さで桃色に染まる
+  corruptionUi: { x: 16, y: 160, edgeAlpha: 0.14 },
+  // 強くなった敵の頭上のハート（上位技 2、進化した技 1つにつき 1、敵の成長 levelsPerHeart ごとに 1）
+  enemyPower: { advanced: 2, evolvedSkill: 1, levelsPerHeart: 3, max: 5 },
+  climaxSe: { delays: [0, 0.5] },   // 絶頂の音（climaxBurst）を鳴らすタイミング（秒）。重ねて鳴らす
+  bgm: { fadeSec: 1.2, synthWhileLoading: false },   // BGM の切り替えのフェード。曲は public/assets/bgm/<explore|bound>.ogg など
+  footsteps: { enemyRange: 6, enemyIntervalSec: 0.08 },   // 敵の足音が聞こえる距離（マス）と、鳴らす最短間隔
+  // レベル表示（画面座標）。吸われた分の残像と、吸い出されるハートの量
+  levelHud: {
+    x: 326, y: 62, radius: 34,
+    ghostHoldSec: 0.35, ghostShrinkPerSec: 0.6,
+    bigDrainRatio: 0.3,       // 必要EXPのこの割合を一度に吸われると、演出が最大
+    particleMin: 4, particleMax: 18,
+    downSec: 1.8,
+    drainSeIntervalSec: 0.35  // 吸われる音を鳴らす最短の間隔
+  },   // 敵の経験値ポップアップを、この秒数のあいだ合算して1つにする
   fx: {
     kissMarkQuality: 2,
     shake: { px: 4, sec: 0.2 },
@@ -433,11 +752,20 @@ export const B = deepFreeze({
   temptation: {
     warningSec: 3,
     timeoutSec: 6,
-    replySec: 0.55,
+    preludeSec: 1.8,          // 技名 → 敵の誘惑を見せてから、選択肢の画面を出すまで
+    replySec: 1.1,            // 選んだあと、返事の台詞を見せる時間
+    beatSec: 0.95,            // 選択肢の画面の鼓動の間隔
+    beatWarnSec: 0.6,         // 3秒経過後の鼓動の間隔（速くなる）
     portraitAlpha: 0.76,
     edgeWidthPx: 72,
     acceptDrainMul: 1.25,
-    timeoutDrainMul: 1.8
+    timeoutDrainMul: 1.8,
+    acceptCondMul: 2.0,       // 受け入れたときの、蓄積デバフの増え方
+    timeoutCondMul: 2.3,      // 時間切れ（自動受容）。受け入れより少しだけ多い
+    resistEvadeBonus: 0.55,   // 「避ける」を選んだときの回避率の上乗せ（必ず避けられるわけではない）
+    cooldownTurns: 4,         // 同じ敵が選択肢を出せるようになるまでのターン数
+    evolveManualAccept: 3,    // 自発的受容の累計で技が進化する回数
+    evolveTimeoutAccept: 4    // 時間切れ受容の累計で技が進化する回数
   },
   buffs: {
     durationTurns: 20

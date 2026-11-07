@@ -7,11 +7,16 @@ const make = (tag, text = '') => {
   return node;
 };
 
-function ensureDebugOptions(run) {
-  run.debugOptions ??= {};
-  run.debugOptions.priestCompanion ??= true;
-  run.debugOptions.enemySpawnWeights ??= {};
-  return run.debugOptions;
+// デバッグ設定は永続側（persistent.debugSettings）に置く。敗北・クリアで新しいランになっても残る
+function ensureDebugOptions(persistent) {
+  persistent.debugSettings ??= {};
+  const d = persistent.debugSettings;
+  d.priestCompanion ??= true;
+  d.enemySpawnWeights ??= {};
+  d.startLevel ??= 1;
+  d.maxHpBonus ??= 0;
+  d.maxMpBonus ??= 0;
+  return d;
 }
 
 function repairHeroStats(hero, levelMax) {
@@ -82,7 +87,7 @@ function section(parent, title) {
 /** Build a title-screen debug editor. Changes are written into the active save immediately. */
 export function openTitleDebugPanel({ save, B, onClose }) {
   const run = save.currentRun;
-  const options = ensureDebugOptions(run);
+  const options = ensureDebugOptions(save.persistent);
   repairHeroStats(run.hero, B.debug.heroLevelMax);
   const overlay = make('div');
   Object.assign(overlay.style, {
@@ -97,7 +102,7 @@ export function openTitleDebugPanel({ save, B, onClose }) {
   });
   const heading = make('h2', 'デバッグ設定');
   Object.assign(heading.style, { margin: '0 0 4px', textAlign: 'center' });
-  const note = make('p', '設定はこのセーブデータに保存され、冒険開始時に反映されます。');
+  const note = make('p', '設定はこのセーブデータに保存されます。レベルと同行者は、敗北して新しい冒険になっても引き継がれます。');
   Object.assign(note.style, { margin: '0 0 12px', color: '#cbbbd0', fontSize: '13px', textAlign: 'center' });
   panel.append(heading, note);
 
@@ -114,6 +119,11 @@ export function openTitleDebugPanel({ save, B, onClose }) {
   const baseMaxMp = run.hero.maxMp;
   let maxHpBonus = 0;
   let maxMpBonus = 0;
+  const syncStart = () => {
+    options.startLevel = run.hero.level;
+    options.maxHpBonus = run.hero.maxHp - (saveSchema.currentRun.hero.maxHp + (run.hero.level - 1) * B.battle.levelUp.hp);
+    options.maxMpBonus = run.hero.maxMp - (saveSchema.currentRun.hero.maxMp + (run.hero.level - 1) * B.battle.levelUp.mp);
+  };
   const statOutputs = {};
   const setLevel = (level) => {
     const state = run.hero;
@@ -127,6 +137,8 @@ export function openTitleDebugPanel({ save, B, onClose }) {
     state.maxMp = Math.min(99999, Math.max(0, baseMaxMp + delta * B.battle.levelUp.mp + maxMpBonus));
     state.hp = Math.max(1, Math.min(state.maxHp, Math.round(state.maxHp * hpRatio)));
     state.mp = Math.max(0, Math.min(state.maxMp, Math.round(state.maxMp * mpRatio)));
+    state.hpLevel = Math.max(state.hpLevel ?? 1, level);
+    syncStart();
     if (statOutputs.maxHp) statOutputs.maxHp.textContent = String(state.maxHp);
     if (statOutputs.maxMp) statOutputs.maxMp.textContent = String(state.maxMp);
   };
@@ -178,7 +190,7 @@ export function openTitleDebugPanel({ save, B, onClose }) {
   addRow(habits, '懇願癖', numberControl(d.beggingHabit.stage, 0, B.habit.beggingMax, (n) => { d.beggingHabit.stage = n; }));
   addRow(habits, '僧侶狙いの癖', numberControl(d.allyTarget.priest, 0, B.habit.allyTargetMax, (n) => { d.allyTarget.priest = n; }));
   addRow(habits, '魔法使い狙いの癖', numberControl(d.allyTarget.mage, 0, B.habit.allyTargetMax, (n) => { d.allyTarget.mage = n; }));
-  for (const [attr, label] of [['mouth', '口'], ['bust', '胸'], ['hip', '尻'], ['foot', '足']]) {
+  for (const [attr, label] of [['mouth', '口'], ['bust', '胸'], ['hand', '手'], ['hip', '尻'], ['foot', '足']]) {
     addRow(habits, `${label}の耐性`, numberControl(save.persistent.resistances[attr], B.resist.floor, 100, (n) => {
       save.persistent.resistances[attr] = n;
     }));

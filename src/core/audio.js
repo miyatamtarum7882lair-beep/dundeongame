@@ -3,47 +3,9 @@
 import { SE_TABLE } from '../data/seTable.js';
 import { clamp } from './util.js';
 
-// ---- 合成音の部品 ----
-// rig: { ctx, out, t0, rate, noiseBuffer, sources, end }
-function tone(rig, { type = 'sine', f0, f1 = f0, start = 0, dur, gain = 0.2, attack = 0.005 }) {
-  const { ctx, out, t0, rate } = rig;
-  const t = t0 + start;
-  const osc = ctx.createOscillator();
-  const g = ctx.createGain();
-  osc.type = type;
-  osc.frequency.setValueAtTime(f0 * rate, t);
-  if (f1 !== f0) osc.frequency.exponentialRampToValueAtTime(f1 * rate, t + dur);
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.linearRampToValueAtTime(gain, t + Math.min(attack, dur * 0.5));
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  osc.connect(g).connect(out);
-  osc.start(t);
-  osc.stop(t + dur + 0.05);
-  rig.sources.push(osc);
-  rig.end = Math.max(rig.end, start + dur + 0.05);
-}
-
-function noise(rig, { filter = 'bandpass', f0 = 1000, f1 = f0, q = 1, start = 0, dur, gain = 0.2, attack = 0.005 }) {
-  const { ctx, out, t0, rate } = rig;
-  const t = t0 + start;
-  const src = ctx.createBufferSource();
-  src.buffer = rig.noiseBuffer;
-  src.loop = true;
-  const filt = ctx.createBiquadFilter();
-  filt.type = filter;
-  filt.Q.value = q;
-  filt.frequency.setValueAtTime(f0 * rate, t);
-  if (f1 !== f0) filt.frequency.exponentialRampToValueAtTime(f1 * rate, t + dur);
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.linearRampToValueAtTime(gain, t + Math.min(attack, dur * 0.5));
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  src.connect(filt).connect(g).connect(out);
-  src.start(t, Math.random() * 0.4);
-  src.stop(t + dur + 0.05);
-  rig.sources.push(src);
-  rig.end = Math.max(rig.end, start + dur + 0.05);
-}
+// 合成音の部品は synthParts.js、敵の固有技の音は enemySynth.js
+import { tone, noise, vib, chime, heartbeat } from './synthParts.js';
+import { ENEMY_SYNTH } from './enemySynth.js';
 
 // ---- 仮の合成音（本番の音は assets/se/ に置いて差し替える）----
 export const SYNTH = {
@@ -77,11 +39,11 @@ export const SYNTH = {
     tone(rig, { type: 'triangle', f0: 520, f1: 170, dur: 0.55, gain: 0.22 });
     tone(rig, { f0: 260, f1: 90, dur: 0.55, gain: 0.12 });
   },
-  // 敵の成長
+  // 敵の成長：甘く下がる鈴と、鼓動（勢いづいていく敵）
   grow(rig) {
-    tone(rig, { f0: 523, dur: 0.18, gain: 0.18 });
-    tone(rig, { start: 0.1, f0: 659, dur: 0.18, gain: 0.18 });
-    tone(rig, { start: 0.2, f0: 784, dur: 0.3, gain: 0.2 });
+    [1568, 1319, 1047].forEach((f, i) => chime(rig, { f, start: i * 0.09, dur: 0.8, gain: 0.09 }));
+    vib(rig, { f0: 196, f1: 262, dur: 0.8, gain: 0.1, attack: 0.25, vibHz: 5, vibDepth: 5 });
+    heartbeat(rig, { start: 0.25, gain: 0.45 });
   },
   // 特殊攻撃の習得
   learn(rig) {
@@ -110,10 +72,11 @@ export const SYNTH = {
     tone(rig, { type: 'sine', f0: 82, f1: 44, start: 0.025, dur: 0.22, gain: 0.2 });
     noise(rig, { filter: 'lowpass', f0: 620, f1: 160, q: 0.8, dur: 0.12, gain: 0.26, attack: 0.002 });
   },
+  // 構え：「きゅん」と上がる甘い音と、小さな鼓動
   warning(rig) {
-    tone(rig, { type: 'sine', f0: 740, f1: 620, dur: 0.14, gain: 0.12 });
-    tone(rig, { type: 'triangle', f0: 1046, f1: 880, start: 0.09, dur: 0.2, gain: 0.1 });
-    noise(rig, { filter: 'highpass', f0: 3800, f1: 2400, start: 0.06, dur: 0.11, gain: 0.055 });
+    vib(rig, { type: 'triangle', f0: 880, f1: 1319, dur: 0.22, gain: 0.1, attack: 0.01, vibHz: 12, vibDepth: 20 });
+    chime(rig, { f: 1760, start: 0.12, dur: 0.45, gain: 0.06 });
+    heartbeat(rig, { start: 0.05, gain: 0.3 });
   },
   bind(rig) {
     noise(rig, { filter: 'bandpass', f0: 900, f1: 320, q: 1.4, dur: 0.28, gain: 0.18, attack: 0.03 });
@@ -162,10 +125,11 @@ export const SYNTH = {
     });
     noise(rig, { filter: 'highpass', f0: 3000, f1: 1800, dur: 0.4, gain: 0.08, attack: 0.1 });
   },
+  // 技の発光：ハートがはじけるきらめき
   skillFlash(rig) {
-    tone(rig, { type: 'triangle', f0: 600, f1: 1800, dur: 0.2, gain: 0.12, attack: 0.02 });
-    tone(rig, { f0: 1200, f1: 2400, start: 0.05, dur: 0.18, gain: 0.05, attack: 0.02 });
-    noise(rig, { filter: 'highpass', f0: 2500, f1: 4500, dur: 0.15, gain: 0.08, attack: 0.03 });
+    tone(rig, { type: 'triangle', f0: 700, f1: 1800, dur: 0.18, gain: 0.1, attack: 0.02 });
+    chime(rig, { f: 2093, start: 0.06, dur: 0.4, gain: 0.06 });
+    noise(rig, { filter: 'highpass', f0: 3000, f1: 5000, dur: 0.15, gain: 0.06, attack: 0.03 });
   },
   climaxStart(rig) {
     tone(rig, { f0: 80, f1: 220, dur: 1.2, gain: 0.35, attack: 0.4 });
@@ -230,7 +194,8 @@ export const SYNTH = {
     tone(rig, { f0: 880, f1: 1760, dur: 0.12, gain: 0.3, attack: 0.002 });
     tone(rig, { type: 'triangle', f0: 2640, start: 0.02, dur: 0.35, gain: 0.1, attack: 0.002 });
     noise(rig, { f0: 4000, f1: 1200, q: 3, dur: 0.25, gain: 0.2, attack: 0.005 });
-  }
+  },
+  ...ENEMY_SYNTH
 };
 
 function createNoiseBuffer(ctx) {
@@ -270,9 +235,17 @@ export class AudioEngine {
       this.master = this.ctx.createGain();
       this.seBus = this.ctx.createGain();
       this.bgmBus = this.ctx.createGain();
-      this.seBus.connect(this.master);
-      this.bgmBus.connect(this.master);
+      this.clearBus = this.ctx.createGain();   // こもらせない音（耳元の拘束役の音）
+      // 周りの音は「こもり」フィルタを通す。両耳をふさがれると、ここで高い音が削られる
+      this.muffleFilter = this.ctx.createBiquadFilter();
+      this.muffleFilter.type = 'lowpass';
+      this.muffleFilter.frequency.value = 20000;
+      this.seBus.connect(this.muffleFilter);
+      this.bgmBus.connect(this.muffleFilter);
+      this.muffleFilter.connect(this.master);
+      this.clearBus.connect(this.master);
       this.master.connect(this.ctx.destination);
+      this.applyMuffle();
       this.noiseBuffer = createNoiseBuffer(this.ctx);
       this.applyVolume();
       this.preload();
@@ -290,7 +263,21 @@ export class AudioEngine {
     if (!this.ctx) return;
     this.master.gain.value = this.volume.master;
     this.seBus.gain.value = this.volume.se;
+    this.clearBus.gain.value = this.volume.se;
     this.bgmBus.gain.value = this.volume.bgm;
+  }
+
+  // 周りの音のこもり（0: なし 〜 1: 強くこもる）
+  setMuffle(amount) {
+    this.muffle = clamp(amount ?? 0, 0, 1);
+    this.applyMuffle();
+  }
+
+  applyMuffle() {
+    if (!this.ctx) return;
+    const a = this.muffle ?? 0;
+    const hz = 20000 * Math.pow(this.B.audio.muffleMinHz / 20000, a);
+    this.muffleFilter.frequency.setTargetAtTime(hz, this.ctx.currentTime, 0.15);
   }
 
   // false でモノラル（左右の定位と背後のこもりをなくす）
@@ -321,7 +308,9 @@ export class AudioEngine {
 
   // opts: { pan: -1〜1, gain: 0〜, behind: 背後ならこもらせる, ally: 仲間なら音量を下げる, vertical: 前後定位, params: 合成音用 }
   // 戻り値: 鳴らせたら true（ロック解除前は false）
-  playSE(id, { pan = 0, gain = 1, behind = false, ally = false, vertical = 0, params = {} } = {}) {
+  // exact: true で、ピッチの揺らぎを付けない（録音した声などに使う）
+  // clear: true で、こもりフィルタを通さない（耳元で鳴る音）
+  playSE(id, { pan = 0, gain = 1, behind = false, ally = false, vertical = 0, params = {}, exact = false, clear = false } = {}) {
     const def = SE_TABLE[id];
     if (!def) {
       console.warn(`未定義のSEです: ${id}`);
@@ -331,8 +320,8 @@ export class AudioEngine {
 
     const { ctx, B } = this;
     const now = ctx.currentTime;
-    const jitter = 1 + (Math.random() * 2 - 1) * B.audio.pitchJitter;
-    const rate = jitter * (1 + clamp(vertical, -1, 1) * (B.spatial.verticalPitch ?? 0.04));
+    const jitter = exact ? 1 : 1 + (Math.random() * 2 - 1) * B.audio.pitchJitter;
+    const rate = exact ? 1 : jitter * (1 + clamp(vertical, -1, 1) * (B.spatial.verticalPitch ?? 0.04));
     const level = (def.gain ?? 1) * gain * (ally ? B.audio.allyGain : 1);
 
     // 同時発音の上限。超えたら、いちばん古い音を止める
@@ -359,7 +348,7 @@ export class AudioEngine {
       node = panner;
       extra.push(panner);
     }
-    node.connect(this.seBus);
+    node.connect(clear ? this.clearBus : this.seBus);
 
     const voice = { voiceGain, extra, sources: [] };
     let durationSec = 0;

@@ -29,9 +29,9 @@ export function flashEnvelope(age, sec, peak = 0.4) {
  * 同じ技名が表示中なら、出し直さず表示時間だけ延ばす。
  * holdSec は、いまの時点からの秒数。
  */
-export function nextBanner(cur, { key, title, sub, attr, holdSec }) {
+export function nextBanner(cur, { key, title, sub, attr, color = null, holdSec }) {
   if (cur && cur.key === key && cur.age < cur.holdSec) {
     return { ...cur, holdSec: Math.max(cur.holdSec, cur.age + holdSec) };
   }
-  return { key, title, sub, attr, age: 0, holdSec };
+  return { key, title, sub, attr, age: 0, holdSec, ...(color ? { color } : {}) };
 }

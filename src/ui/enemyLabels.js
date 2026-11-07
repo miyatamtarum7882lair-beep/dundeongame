@@ -4,6 +4,47 @@ import { ENEMIES_BY_ID, ATTRS } from '../data/enemies.js';
 import { markTier, getMarkScore } from '../battle/learning.js';
 import { enemyExpNeeded } from '../battle/enemyStats.js';
 import { clamp01 } from '../core/util.js';
+import { themeOf } from '../data/enemyThemes.js';
+import { drawShape } from './fxShapes.js';
+
+// 勢いづいた度合い（0〜max）。上位技の習得・進化した技・種族の成長から数える
+export function enemyPower(persistent, speciesId, B) {
+  const P = B.enemyPower;
+  const def = ENEMIES_BY_ID[speciesId];
+  let n = 0;
+  if (def?.advancedSkill && persistent.learnedSkills?.[speciesId]?.includes(def.advancedSkill)) n += P.advanced;
+  for (const st of Object.values(persistent.skillEvolution?.[speciesId] ?? {})) if (st?.evolved) n += P.evolvedSkill;
+  n += Math.floor((persistent.enemyLevels?.[speciesId] ?? 0) / P.levelsPerHeart);
+  return Math.min(P.max, n);
+}
+
+// 足元のハートの光の輪（勢いづいた敵だけ）
+function drawPowerAura(g, x, y, power, color, time) {
+  const k = power / 5;
+  const pulse = 0.75 + 0.25 * Math.sin(time * 3 + x * 0.01);
+  g.save();
+  g.translate(x, y - 4);
+  g.scale(1, 0.38);
+  const r = 26 + 10 * k;
+  const grad = g.createRadialGradient(0, 0, r * 0.2, 0, 0, r * 1.2);
+  grad.addColorStop(0, `${color}00`);
+  grad.addColorStop(0.7, `${color}${Math.round((0.25 + 0.35 * k) * pulse * 255).toString(16).padStart(2, '0')}`);
+  grad.addColorStop(1, `${color}00`);
+  g.fillStyle = grad;
+  g.beginPath();
+  g.arc(0, 0, r * 1.2, 0, Math.PI * 2);
+  g.fill();
+  g.globalAlpha = 0.6 + 0.3 * pulse;
+  for (let i = 0; i < power + 1; i++) {
+    const a = time * 0.9 + (i / (power + 1)) * Math.PI * 2;
+    g.save();
+    g.translate(Math.cos(a) * r, Math.sin(a) * r);
+    g.scale(1, 1 / 0.38);
+    drawShape(g, 'heart', 4.5, color);
+    g.restore();
+  }
+  g.restore();
+}
 
 const TIER_STYLE = {
   stranger: { icon: '', color: '#ffffff', outline: 'rgba(0, 0, 0, 0.85)' },
@@ -12,7 +53,7 @@ const TIER_STYLE = {
 };
 
 // view.overlays は DungeonView.draw が作る（各敵の足元の画面座標）
-export function drawEnemyLabels(g, view, persistent, B) {
+export function drawEnemyLabels(g, view, persistent, B, time = 0) {
   g.save();
   g.textAlign = 'left';
   g.textBaseline = 'alphabetic';
@@ -25,6 +66,9 @@ export function drawEnemyLabels(g, view, persistent, B) {
     const attr = ATTRS[def.attr];
     const style = TIER_STYLE[markTier(getMarkScore(persistent, u.speciesId), B)];
     const top = o.y - B.tile.spriteH - 6;
+    const power = enemyPower(persistent, u.speciesId, B);
+    const theme = themeOf(u.speciesId);
+    if (power > 0) drawPowerAura(g, o.x, o.y, power, theme.main, time);
 
     // HPバー
     const bw = 58;
@@ -73,6 +117,18 @@ export function drawEnemyLabels(g, view, persistent, B) {
     g.strokeText(lvText, startX + dot + nameW, baseY);
     g.fillStyle = '#ffd36b';
     g.fillText(lvText, startX + dot + nameW, baseY);
+
+    // 勢いづいた敵：名前の上に、強くなった分だけハートが並ぶ
+    for (let i = 0; i < power; i++) {
+      const beat = 1 + 0.15 * Math.max(0, Math.sin(time * 5 + i * 0.7));
+      g.save();
+      g.translate(o.x - ((power - 1) * 11) / 2 + i * 11, baseY - 22);
+      g.scale(beat, beat);
+      g.shadowColor = theme.main;
+      g.shadowBlur = 6;
+      drawShape(g, 'heart', 6, theme.main);
+      g.restore();
+    }
   }
   g.restore();
 }
