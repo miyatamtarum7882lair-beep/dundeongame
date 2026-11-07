@@ -10,7 +10,7 @@
     "sim": "node tools/sim.mjs",
     "sprite": "node tools/build-sprite.mjs",
     "dungeon": "node tools/checkDungeon.mjs",
-    "test:logic": "node tools/test-climax.mjs && node tools/test-battle-logic.mjs && node tools/test-flashback.mjs && node tools/test-se-logic.mjs && node tools/test-exp-drain.mjs && node tools/test-spatial-pan.mjs && node tools/test-charm.mjs && node tools/test-drain-fx.mjs && node tools/test-skill-stage.mjs"
+    "test:logic": "node tools/test-climax.mjs && node tools/test-battle-logic.mjs && node tools/test-flashback.mjs && node tools/test-se-logic.mjs && node tools/test-exp-drain.mjs && node tools/test-spatial-pan.mjs && node tools/test-charm.mjs && node tools/test-drain-fx.mjs && node tools/test-skill-stage.mjs && node tools/test-enemy-choice.mjs"
   },
   "keywords": [],
   "author": "",

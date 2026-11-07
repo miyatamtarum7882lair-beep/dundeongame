@@ -75,6 +75,26 @@ export const LOG_KINDS = {
     mark: '!', color: 'orange', importance: 'minor', se: null,
     text: '{name}は「{skill}」の構えを取った！'
   },
+  enemySpeak: {
+    mark: '♡', color: 'pink', importance: 'minor', se: null,
+    text: '{name}「{line}」'
+  },
+  choiceAvoided: {
+    mark: '◇', color: 'cyan', importance: 'minor', se: null,
+    text: '{name}の技をかわした！'
+  },
+  choiceBlocked: {
+    mark: '!', color: 'orange', importance: 'minor', se: null,
+    text: '逃げ道がない！ {name}の技を受ける'
+  },
+  choiceAccepted: {
+    mark: '♡', color: 'pink', importance: 'minor', se: null,
+    text: '{name}の誘惑を受け入れた。ドレインが強まる'
+  },
+  choiceTimeout: {
+    mark: '♡', color: 'pink', importance: 'major', se: null,
+    text: '{name}に見とれ、抗えなくなった！ ドレインが大きく強まる'
+  },
   enemySkillLearn: {
     mark: '★', color: 'gold', importance: 'major', se: 'learn',
     text: '{name}は吸収を重ね、「{skill}」を覚えた！'

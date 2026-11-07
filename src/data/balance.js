@@ -423,6 +423,15 @@ export const B = deepFreeze({
     banner: { y: 96, minWidthPx: 360, fontPx: 34, subPx: 18, holdMinSec: 1, fadeInSec: 0.12, fadeOutSec: 0.3, slidePx: 40 },
     flash: { localAlpha: 0.35, veilAlpha: 0.08, radiusPx: 150 }
   },
+  temptation: {
+    warningSec: 3,
+    timeoutSec: 6,
+    replySec: 0.55,
+    portraitAlpha: 0.76,
+    edgeWidthPx: 72,
+    acceptDrainMul: 1.25,
+    timeoutDrainMul: 1.8
+  },
   buffs: {
     durationTurns: 20
   },

@@ -39,6 +39,7 @@ import { drawPartyPanel } from './ui/partyPanel.js';
 import { drawDebuffPanel } from './ui/debuffPanel.js';
 import { buildStatusEntries, drawStatusPanel } from './ui/statusPanel.js';
 import { SkillHud } from './ui/skillHud.js';
+import { EnemyChoiceView } from './ui/enemyChoiceView.js';
 import {
   recordDefeat, getMarkScore, markTier, MARK_TIER_NAMES, recordEncounter
 } from './battle/learning.js';
@@ -136,6 +137,12 @@ async function loadEnemyPortrait(speciesId) {
   await preloadPortrait(speciesId);
   return getPortrait(speciesId);
 }
+const enemyChoiceView = new EnemyChoiceView({
+  cfg: B.temptation,
+  fontFamily: B.ui.fontFamily,
+  loadPortrait: loadEnemyPortrait,
+  onChoose: (answer) => combat.resolveChoice(answer)
+});
 async function attachFlashbackArt(id, speciesId, attr, skillId, tx, ty) {
   try {
     const hero = exploration.hero;
@@ -204,6 +211,8 @@ function spatialAudioOptions(tx, ty) {
   return spatialFromOffset(dx, dy, hero.dir, B.spatial);
 }
 combat.on('fx', (e) => battleFx.handle(e));
+combat.on('enemyChoiceStart', (info) => enemyChoiceView.show(info));
+combat.on('enemyChoiceEnd', () => enemyChoiceView.clear());
 combat.on('anim', ({ unit, tag, delay = 0 }) =>
   later(delay, () => dungeonView.viewFor(unit).play(tag, { once: !['bound', 'bind_down', 'bind_side'].includes(tag) }))
 );
@@ -406,6 +415,13 @@ function canExplore() {
 function handleInput() {
   if (titleActive) {
     input.drain();
+    input.drainRaw();
+    return;
+  }
+  if (enemyChoiceView.active()) {
+    for (const event of input.drain()) {
+      if (event.action === 'pause') clock.togglePause('esc');
+    }
     input.drainRaw();
     return;
   }
@@ -647,6 +663,7 @@ function loop(nowMs) {
   timeMode.update(dt);
   combat.climax.update(dt);
   combat.flashback.update(dt);
+  enemyChoiceView.update(dt);
   eventState.update(clock.time);
   combat.director.update(dt);
   skillHud.update(dt);

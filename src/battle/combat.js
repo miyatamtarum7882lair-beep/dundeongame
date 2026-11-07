@@ -7,7 +7,7 @@ import { DEFEAT_SKILLS } from '../data/defeatSkills.js';
 import { SKILL_DEFS } from '../data/skills.js';
 import { joinEffectFor } from '../data/flashbackData.js';
 import { RACE_ABILITIES_BY_ID, drainAbilityId } from '../data/raceAbilities.js';
-import { chebyshev } from '../dungeon/gridMath.js';
+import { canStep, chebyshev } from '../dungeon/gridMath.js';
 import {
   applyLearning, pickWeighted, getMarkScore, getRememberedSkill, recordDefeat, recordMarkEvent
 } from './learning.js';
@@ -22,6 +22,7 @@ import { enemyExpNeeded } from './enemyStats.js';
 import { SkillDirector, normalizeStage, cuesFor } from './skillStage.js';
 import { STAGE_FX } from './stageFx.js';
 import { SKILL_STAGES } from '../data/skillStages.js';
+import { choiceFor, speechFor } from '../data/enemyDialogue.js';
 import { FlashbackController } from './flashback.js';
 import { FLASHBACK_STRONG } from '../data/flashbackRules.js';
 
@@ -49,6 +50,7 @@ export class Combat extends Emitter {
     this.actedThisTurn = false;
     this.grown = new Set();      // 同じ階では、同じ能力は+1Lvまで
     this.bound = null;
+    this.choice = null;
     this.escapeInvulnTurns = 0;
 
     const run = () => this.save.currentRun;
@@ -129,7 +131,61 @@ export class Combat extends Emitter {
     return !attr || attr === 'all' ? fallback : attr;
   }
 
+  offerChoice(enemy, skillId, continueSkill) {
+    const choice = choiceFor(enemy.speciesId, skillId);
+    if (!choice || this.choice) return false;
+    this.choice = { enemy, skillId, continueSkill };
+    this.actedThisTurn = true;
+    this.emit('log', 'enemySpeak', { name: enemy.name, line: choice.intro });
+    this.emit('enemyChoiceStart', {
+      enemyId: enemy.speciesId,
+      name: enemy.name,
+      skillName: this.skillLabel(skillId),
+      choice
+    });
+    return true;
+  }
+
+  dodgeChoice(enemy) {
+    const hero = this.exp.hero;
+    const options = [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }]
+      .filter(({ dx, dy }) => canStep(this.exp.walk, hero.tx, hero.ty, dx, dy)
+        && !this.exp.unitAt(hero.tx + dx, hero.ty + dy));
+    if (options.length === 0) return false;
+    options.sort((a, b) => chebyshev(hero.tx + b.dx, hero.ty + b.dy, enemy.tx, enemy.ty)
+      - chebyshev(hero.tx + a.dx, hero.ty + a.dy, enemy.tx, enemy.ty));
+    hero.moveTo(hero.tx + options[0].dx, hero.ty + options[0].dy);
+    hero.fromX = hero.tx;
+    hero.fromY = hero.ty;
+    this.exp.refresh();
+    this.emit('anim', { unit: hero, tag: 'flee' });
+    this.emit('log', 'choiceAvoided', { name: enemy.name });
+    return true;
+  }
+
+  resolveChoice(answer) {
+    const active = this.choice;
+    if (!active) return false;
+    this.choice = null;
+    this.emit('enemyChoiceEnd');
+    if (answer === 'resist' && this.dodgeChoice(active.enemy)) return true;
+    if (answer === 'resist') this.emit('log', 'choiceBlocked', { name: active.enemy.name });
+    const drainMul = answer === 'timeout' ? this.B.temptation.timeoutDrainMul
+      : answer === 'accept' ? this.B.temptation.acceptDrainMul : 1;
+    if (answer === 'timeout') this.emit('log', 'choiceTimeout', { name: active.enemy.name });
+    else if (answer === 'accept') this.emit('log', 'choiceAccepted', { name: active.enemy.name });
+    active.continueSkill({ answer, drainMul });
+    return true;
+  }
+
+  clearChoice() {
+    if (!this.choice) return;
+    this.choice = null;
+    this.emit('enemyChoiceEnd');
+  }
+
   resetFloor() {
+    this.clearChoice();
     this.director?.clear();
     this.grown = new Set();
     this.beat = 0;
@@ -369,12 +425,14 @@ export class Combat extends Emitter {
     });
   }
 
-  startBound(e, skillId, preFlashed = false) {
+  startBound(e, skillId, preFlashed = false, choiceResult = null) {
     if (this.climax.blocksBinding()) {
       this.autoGuardBind(e);
       return;
     }
     if (this.bound) return this.addBoundBinder(e, skillId);
+    if (!choiceResult && this.offerChoice(e, skillId, (result) => this.startBound(e, skillId, preFlashed, result))) return;
+    if (!choiceResult) this.emit('log', 'enemySpeak', { name: e.name, line: speechFor(e.speciesId, this.attrOf(e.speciesId)) });
     if (!preFlashed) {
       const def = SKILL_DEFS[skillId];
       const attr = def?.attr ?? this.attrOf(e.speciesId);
@@ -397,7 +455,8 @@ export class Combat extends Emitter {
       idleSec: 0,
       surrenderRate: isBackBind ? this.B.bound.backSurrenderGain : 0,
       escapeProgress: 0,
-      requiredClicks: 0
+      requiredClicks: 0,
+      choiceDrainMul: choiceResult?.drainMul ?? 1
     };
     this.addBoundBinder(e, skillId, false);
     this.bound.requiredClicks = this.getRequiredClicks();
@@ -560,7 +619,7 @@ export class Combat extends Emitter {
     const { B } = this;
     const bound = this.bound;
     if (!bound) return;
-    const res = this.drainHeroExp(B.bound.expDrainPerSec * drainMult * this.buffs.mult('drainTaken'));
+    const res = this.drainHeroExp(B.bound.expDrainPerSec * drainMult * this.buffs.mult('drainTaken') * (bound.choiceDrainMul ?? 1));
     for (const { unit } of bound.binders) {
       this.gainDrainExperience(unit, res.lost * B.bound.expShareRate);
     }
@@ -717,9 +776,10 @@ export class Combat extends Emitter {
     const surrenderMul = 1 + bound.surrenderRate * 0.8;
     const mul = Math.min(B.bound.absorbCap, drainMul * softness.drainMul * resMul * uniteMul * backMul * surrenderMul);
     const scale = this.climax.drainScale() * this.buffs.mult('drainTaken');
-    const amount = Math.min(hs.mp, Math.max(1, Math.round(B.bound.mpPerSec * durationSec * mul * scale)));
+    const choiceMul = bound.choiceDrainMul ?? 1;
+    const amount = Math.min(hs.mp, Math.max(1, Math.round(B.bound.mpPerSec * durationSec * mul * scale * choiceMul)));
     hs.mp -= amount;
-    this.drainHeroExp(B.bound.expDrainPerSec * durationSec * mul * scale);
+    this.drainHeroExp(B.bound.expDrainPerSec * durationSec * mul * scale * choiceMul);
     for (const binder of bound.binders) {
       const { unit, attr, skillId } = binder;
       this.gainDrainExperience(unit, amount * B.bound.expShareRate);
@@ -881,6 +941,9 @@ export class Combat extends Emitter {
       if (this.save.settings.flashback !== 'off') this.emit('se', { id: 'skillFlash', tx: e.tx, ty: e.ty });
     }
     if (windupOnly) return;
+    if (def.category === 'special' && !ctx?.choiceResolved) {
+      this.emit('log', 'enemySpeak', { name: e.name, line: speechFor(e.speciesId, attr) });
+    }
     if (this.shouldBanner(def, SKILL_STAGES[skillId])) {
       this.emit('skillName', {
         key: skillId,
@@ -902,7 +965,7 @@ export class Combat extends Emitter {
     const count = stage.hits.count;
     const per = stage.perHit;
     const guard = this.guarding ? B.battle.guardMul : 1;
-    const scale = this.climax.drainScale() * this.buffs.mult('drainTaken');
+    const scale = this.climax.drainScale() * this.buffs.mult('drainTaken') * (pl.choiceDrainMul ?? 1);
 
     let hpLoss = 0;
     if (nums.hpRate && per.hp > 0) {
@@ -1002,6 +1065,9 @@ export class Combat extends Emitter {
     if (!def) return;
     const nums = B.skills[skillId] ?? {};
     const attr = def.attr ?? this.attrOf(e.speciesId);
+    if (!ctx?.choiceResolved && this.offerChoice(e, skillId, (result) =>
+      this.useSkill(e, skillId, { ...ctx, choiceResolved: true, choiceDrainMul: result.drainMul })
+    )) return;
     if (FLASHBACK_STRONG.has(skillId)) this.requestFlashback('strong', e, attr, skillId);
     else if (skillId === ctx?.rememberedSkillId) this.requestFlashback('rematch', e, attr, skillId);
 
@@ -1017,7 +1083,7 @@ export class Combat extends Emitter {
     this.director.start({
       stage,
       payload: {
-        e, skillId, def, nums, attr, ctx, mpMul,
+        e, skillId, def, nums, attr, ctx, mpMul, choiceDrainMul: ctx?.choiceDrainMul ?? 1,
         skillName: this.skillLabel(skillId),
         total: { hp: 0, mp: 0, exp: 0 },
         mpEmptyLogged: false
@@ -1163,6 +1229,7 @@ export class Combat extends Emitter {
     p.runCount += 1;
     this.defeated = null;
     this.stunTurns = 0;
+    this.clearChoice();
     this.director.clear();
     this.climax.reset();
     this.buffs.clear();

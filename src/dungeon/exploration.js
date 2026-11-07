@@ -227,7 +227,7 @@ export class Exploration extends Emitter {
     }
 
     const held = this.heldVector(input);
-    this.holdSec = held.dx || held.dy ? this.holdSec + dtSec : 0;
+    this.holdSec = enabled && (held.dx || held.dy) ? this.holdSec + dtSec : 0;
 
     if (enabled && this.busySec <= 0) this.tryAct(held);
     this.camera.update(dtSec, this.heroFeet(), this.map);
@@ -436,7 +436,7 @@ export class Exploration extends Emitter {
       isPresent: (enemy) => this.units.includes(enemy),
       act: (enemy) => this.actEnemy(enemy, boundPhase),
       shouldStop: () => Boolean(this.combat.defeated) || (!boundPhase && Boolean(this.combat.bound)),
-      isBusy: () => this.combat.director.busy(),
+      isBusy: () => this.combat.director.busy() || Boolean(this.combat.choice),
       onDone: () => {
         this.enemyPhase = null;
         onDone?.();
