@@ -1,5 +1,6 @@
 // File: src/data/balance.js
 // すべての暫定値はここに集約する。コードへ直書きしない。値は読み取り専用。
+import { ENEMIES } from './enemies.js';
 function deepFreeze(obj) {
   for (const value of Object.values(obj)) {
     if (value && typeof value === 'object') deepFreeze(value);
@@ -294,7 +295,13 @@ export const B = deepFreeze({
     extraCorridorRate: 0.34,
     fovRadius: 7,
     roomLit: true,
-    enemySpecies: ['kitten', 'blackRibbon', 'pinkFox'],
+    enemySpecies: ENEMIES.map((enemy) => enemy.id),
+    // 個体ごとの重み。デバッグ画面で指定した敵は、その値で上書きできる。
+    enemyRankWeightByFloor: {
+      1: { basic: 1, unique: 0, elite: 0 },
+      2: { basic: 1, unique: 0.25, elite: 0 },
+      3: { basic: 0.55, unique: 0.8, elite: 0.6 }
+    },
     enemiesPerFloor: { min: 3, max: 5 },
     enemyMinDistance: 7,
     aggroRange: 9,

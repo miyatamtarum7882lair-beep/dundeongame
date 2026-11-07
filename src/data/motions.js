@@ -81,6 +81,7 @@ export const CHARACTER_MOTIONS = {
 };
 
 export const DEFAULT_MOTIONS = ['idle', 'walk_down', 'walk_up', 'walk_side', 'hit',
+                                'skill_blowKiss', 'skill_pinkBreath', 'skill_sexyPose',
                                 'beg', 'bind_down', 'bind_side'];
 
 export function motionsFor(characterId) {

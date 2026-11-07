@@ -1,0 +1,39 @@
+﻿デバフ名,種類,主な効果,代表キャラ,対処方法
+隙だらけ,一時,背面攻撃に弱くなる,thiefGirl,警戒行動・遮蔽物
+目移り,一時,注意散漫、初回回避低下,thiefGirl,1ターン静止
+偽りの祝福,一時,小回復の代償でドレイン抵抗低下,angelGirl,祝福解除
+安心,一時,攻撃をためらい防御準備が遅れる,angelGirl,攻撃的な一手
+密着疲れ,一時,拘束継続で脱出力低下,blueHairGal,距離を取る
+脱力,一時,攻撃力・脱出力低下,"blueHairGal, pamperingLady",休息・解除
+おねだり負け,一時,次の誘惑・拘束に弱くなる,mikuGirl,拒絶・距離
+同情の隙,一時,接近に反応が遅れる,pleadingBunny,検知・距離
+圧迫,一時,移動・拘束脱出低下,velvetBunny,広い場所に移動
+萎縮,一時,回避・抵抗低下,"velvetBunny, darkSister",集中・解除
+服従,一時,拘束脱出・攻撃が鈍る,darkSister,詠唱中断
+罪の刻印,永続・条件,シスター固有のMP吸収被害増,darkSister,浄化・贖罪クエスト
+体勢崩し,一時,回避と拘束耐性の低下,"powerBunny, tricksterDevil",ステップ・立て直し
+力負けの屈辱,永続・条件,怪力拘束に弱くなる,powerBunny,訓練・回復イベント
+堕落,蓄積・一時,抵抗力が徐々に低下,sakuraEnchantress,花印解除・短期決戦
+堕落の烙印,永続・条件,堕落の持続を促進,sakuraEnchantress,解呪
+レベル漏れ癖,共通・蓄積,経験値の盗取被害が増える,全18体（EXP被害時）,漏出抑制アイテム・浄化
+無力感,一時,攻撃力や反撃効率の低下,demonicChinaGirl,一度離脱
+敗北の烙印,永続・条件,直接EXPドレインに弱くなる,demonicChinaGirl,浄化
+油断,一時,回避と拘束抵抗の低下,littleDevilLady,誘導から離れる
+魔力漏出,一時・継続,行動ごとにMPが減る,silverFoxMaid,漏出解除
+魔力漏れ体質,永続・条件,魔力漏出の効果が増す,silverFoxMaid,専門治療
+油断癖,永続・条件,罠への抵抗が下がる,tricksterDevil,訓練・浄化
+マーキング,一時,追跡され特殊技の命中が上がる,kissHunter,印消去・射線遮断
+追跡疲れ,一時,長い逃走で回避が鈍る,kissHunter,追跡解除
+眠気,蓄積・一時,行動速度・回避の低下,dreamLady,眠気解除
+睡眠,一時,行動不能、解除手段あり,dreamLady,覚醒
+集中力低下,一時・蓄積,技成功率・抵抗力の低下,whisperDevil,沈黙・距離
+思考混乱,一時,行動選択が不安定になる,whisperDevil,集中・解除
+囁きへの弱さ,永続・条件,囁き系の状態異常耐性が下がる,whisperDevil,訓練・浄化
+骨抜き,一時,拘束抵抗が低下,blondeBunny,側面へ離脱
+放心,一時,次の一手の回避低下,blondeBunny,解除
+甘え癖,永続・条件,甘やかし系に対する抵抗が弱まる,"pamperingLady, dreamLady",自立イベント・浄化
+依存,蓄積・一時,同一敵に近づきやすくなる,pamperingLady,距離・解除
+足止め,一時,1回の移動を制限,"littleDevilLady, blueHairGal",拘束解除
+花印,一時,堕落を継続付与する印,sakuraEnchantress,印消去
+罠目印,一時,地面トラップを見抜きづらくなる,tricksterDevil,罠解除
+圧倒,一時,次の正面拘束に弱い,blondeBunny,側面回避

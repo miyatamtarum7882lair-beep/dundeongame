@@ -1,6 +1,7 @@
 // File: src/dungeon/generate.js
 // 部屋と通路のダンジョン生成。同じ seed と floor なら、必ず同じ階になる。
 import { mulberry32 } from '../core/util.js';
+import { ENEMIES_BY_ID } from '../data/enemies.js';
 import { bfsDistances } from './gridMath.js';
 
 export const TILE = { WALL: 0, FLOOR: 1, STAIRS: 2 };
@@ -100,9 +101,11 @@ export function generateFloor(seed, floor, B, enemySpawnWeights = {}) {
   );
   const count = Math.min(ri(D.enemiesPerFloor.min, D.enemiesPerFloor.max), spawnPool.length);
   const enemySpawns = [];
+  const rankWeights = D.enemyRankWeightByFloor[Math.min(Math.max(1, floor), D.floorsPerDungeon)];
   const configuredSpecies = D.enemySpecies.map((species) => ({
     species,
-    weight: Math.max(0, Number(enemySpawnWeights[species] ?? 1) || 0)
+    weight: Math.max(0, Number(enemySpawnWeights[species]
+      ?? rankWeights[ENEMIES_BY_ID[species]?.rank] ?? 0) || 0)
   }));
   const configuredTotal = configuredSpecies.reduce((sum, entry) => sum + entry.weight, 0);
   const weightedSpecies = configuredSpecies.filter((entry) => entry.weight > 0);

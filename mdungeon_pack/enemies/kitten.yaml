@@ -1,0 +1,177 @@
+id: kitten
+name: 小悪魔キトゥン
+attr: 口
+rank: basic
+concept: 挑発に応じるほど弱点が定着する小悪魔
+appearance:
+  summary: 銀白色のツインテールと紫色の瞳、黒い猫耳風アクセサリーと黒いニット衣装の成人女性。
+  charmPoint: 唇と挑発的な笑顔。キスをモチーフにした魔法でMPを吸収。
+personality:
+  archetype: 生意気で意地悪な小悪魔
+  traits:
+  - 相手をからかう
+  - 自発的な屈服を見ると得意げ
+  - 不利になると動揺
+  speech:
+    firstPerson: あたし
+    heroCall: ザコくん
+    tone: 生意気で軽快、挑発が多い。
+    endings:
+    - ～だよ♡
+    - ～でしょ？
+    avoid:
+    - 幼児語
+  sampleLines:
+    encounter: あはっ、ザコくん発見♡
+    bind: つっかまえたぁ♡
+    drain: MP減ってるよぉ？
+    familiar: また誘惑されに来たの？
+    rememberUse: これ前も効いたよね？
+    defeat: あたしの勝ちぃ♡
+behavior:
+  style: 挑発で油断を蓄積させ、隣接拘束へ。自分から誘惑を受容すると誘惑癖が永続化する。
+  drainFeel: 小刻みなMPドレイン。
+skills:
+  normal:
+    name: 小悪魔タッチ
+    note: 軽い近接攻撃。
+    evolution:
+      conditionType: repeated_use
+      condition: 「小悪魔タッチ」で累積命中が基準に到達
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: 小悪魔タッチ・改
+      upgradedEffect: 固有状態異常への連携を強化
+      counterplay: 予備動作・回避・解除を維持
+      status: 提案
+  bind:
+    name: ざぁこ♡キッスホールド
+    note: 上下左右の隣接から予備動作後に拘束し、MPを継続吸収。MP0フィニッシュで大量経験値ドレインと敵強化。
+    evolution:
+      conditionType: finish
+      condition: 「ざぁこ♡キッスホールド」でMP0フィニッシュに成功
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: ざぁこ♡キッスホールド・改
+      upgradedEffect: MP吸収・拘束の強化
+      counterplay: 予備動作・回避・解除を維持
+      status: 提案
+  specials:
+  - name: ざぁこ♡の誘惑
+    kind: 魅了
+    range: 中
+    windup: なし
+    effect: 油断を蓄積。
+    impression: 繰り返すほど次の拘束が危険になる。
+    power: 弱
+    evolution:
+      conditionType: debuff_max
+      condition: この技の反復命中で「誘惑癖」蓄積をMAXにする
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: ざぁこ♡の誘惑・改
+      upgradedEffect: 主力デバフ蓄積または拘束連携を強化
+      counterplay: 回避・拒否・解除を維持
+      status: 提案
+  - name: 小悪魔の投げキッス
+    kind: 遠距離
+    range: 中
+    windup: あり
+    effect: 小量MP吸収と油断への追撃。
+    impression: 繰り返すほど次の拘束が危険になる。
+    power: 弱
+    evolution:
+      conditionType: debuff_max
+      condition: この技の反復命中で「誘惑癖」蓄積をMAXにする
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: 小悪魔の投げキッス・改
+      upgradedEffect: 主力デバフ蓄積または拘束連携を強化
+      counterplay: 回避・拒否・解除を維持
+      status: 提案
+  - name: ねえ、負けちゃう？♡
+    kind: 状態異常
+    range: 近い
+    windup: あり
+    effect: 自発的受容で誘惑癖が進む。
+    impression: 繰り返すほど次の拘束が危険になる。
+    power: 中
+    evolution:
+      conditionType: choice_count
+      condition: 主人公が「ねえ、負けちゃう？♡」で自発的受容または力比べ敗北を規定回数選択・経験する
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: ねえ、負けちゃう？♡・改
+      upgradedEffect: 主力デバフ蓄積または拘束連携を強化
+      counterplay: 回避・拒否・解除を維持
+      status: 提案
+      alternativeConditions:
+      - conditionType: manual_accept_count
+        condition: この技の選択肢で受け入れるを累計3回選ぶ（提案）
+        counterScope: 敵個体・技単位
+      - conditionType: timeout_accept_count
+        condition: この技の選択肢を6秒放置して自動受容を累計4回発生させる（提案）
+        counterScope: 敵個体・技単位
+      conditionLogic: 従来条件 OR 自発的受容回数 OR タイムアウト受容回数（進化は一度のみ）
+    interactiveChoice:
+      enabled: true
+      mode: oneIllustrationWithDialogue
+      illustration: reference_images/kitten.jpg
+      dialogue: ほらぁ、自分から負けちゃえば？
+      trigger: 技の予備動作成立時、技処理の直前。1回の技発動につき最大1回
+      choices:
+      - id: resist
+        label: 避ける／振り切る／断る（技に応じて表示）
+        effect: 挑発を拒否して身構える
+        risk: 成功時は誘いの追加効果を防ぐ。通常の命中判定は技ごとに処理
+      - id: accept
+        label: 受け入れる
+        effect: 誘惑癖が蓄積し次のキス拘束が強化
+        risk: MPドレイン・固有デバフ蓄積が強化され、次の拘束への隙が増える
+      timer:
+        warningAtSeconds: 3
+        warningVisual: 画面周縁がピンク色に変化し、ハートが増える。残り時間を明示
+        autoAcceptAtSeconds: 6
+        timeoutAction: accept
+        timeoutDrainBonus: 通常の受容よりMPドレインを強化（倍率未定）
+        timeoutDebuffBonus: 自発的な受容より大きすぎない追加蓄積（調整案）
+        timerStarts: 選択肢表示と同時
+        timerPauses: ゲーム停止・アプリ非アクティブ・アクセシビリティ一時停止中は進行しない
+      onAcceptance:
+        debuff: 誘惑癖
+        growth: 敵個体の受容成功記録を進める。タイムアウト成功は別カウンター
+        nextAttack: 拘束への移行や追撃を許しやすくなる（確定連続拘束は禁止）
+      evolutionContribution:
+        voluntaryAccept: 自発的受容3回（暫定）で技進化への追加ルート
+        timeoutAccept: 時間切れ自動受容4回（暫定）で技進化への追加ルート
+        originalCondition: 従来の技固有進化条件も維持し、ORで判定
+      balance:
+        perEnemyChoiceSkillCap: 1
+        singleChoicePerCast: true
+        retriggerCooldownTurns: 提案：3～5ターン
+        skipOnRepeatCastSameEncounter: 提案：同じ戦闘で連続した選択肢の乱発は避ける
+        counterplay: 拒否を選べば自発的受容による永続悪化を回避できる
+        status: 提案
+  advanced:
+    name: 小悪魔の完全誘惑
+    note: 指定拘束技によるフィニッシュ成功後に永続習得。
+    evolution:
+      conditionType: unlock_from_designated_skill
+      condition: 「ざぁこ♡キッスホールド」でMP0フィニッシュを成功させる
+      scope: 敵個体ごとに永続・上位技単位
+      evolvedName: 小悪魔の完全誘惑
+      upgradedEffect: 上位技を解放
+      counterplay: 脱出可能な猶予を維持
+      status: 提案
+presentation:
+  soundImage: 軽い魔法音と魔力吸収音。
+  effectImage: 固有デバフ進行に応じてピンク・紫の視覚演出が濃くなる。
+  colorImage: ピンク、紫、白、黒
+notes: プロトタイプ初期basic敵。従来技は刷新。個別技進化・レベル漏れ癖共通ルールを適用。
+balance:
+  role: プロトタイプ初期敵
+  debuffs:
+    primary: 誘惑癖
+    secondary:
+    - 油断
+    shared: レベル漏れ癖
+  counterplay: 予備動作の回避、誘惑の拒否、拘束の解除
+choiceSystem:
+  selectedSkill: ねえ、負けちゃう？♡
+  maxChoiceSkills: 1
+  note: 選択肢はこの敵の指定技1つのみ。他の技は通常戦闘処理。

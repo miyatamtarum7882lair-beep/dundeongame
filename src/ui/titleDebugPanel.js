@@ -208,13 +208,15 @@ export function openTitleDebugPanel({ save, B, onClose }) {
   syncLose();
 
   const frequency = section(panel, '敵ごとの出現頻度');
-  const description = make('p', '割合を上げると出やすくなり、0%で出現しません。');
+  const description = make('p', '未調整の敵は階層別の標準頻度です。調整するとその階でも指定値で出現し、0%で停止します。');
   Object.assign(description.style, { margin: '0 0 6px', color: '#cbbbd0', fontSize: '13px' });
   frequency.append(description);
   for (const enemyId of B.dungeon.enemySpecies) {
     const enemy = ENEMIES.find((entry) => entry.id === enemyId);
     if (!enemy) continue;
-    const weight = Math.round((options.enemySpawnWeights[enemyId] ?? 1) * 100);
+    const rankWeights = B.dungeon.enemyRankWeightByFloor[Math.min(Math.max(1, run.floor), B.dungeon.floorsPerDungeon)];
+    const defaultWeight = rankWeights[enemy.rank] ?? 0;
+    const weight = Math.round((options.enemySpawnWeights[enemyId] ?? defaultWeight) * 100);
     addRow(frequency, enemy.name, rangeControl(weight, 0, 300, (percent) => {
       options.enemySpawnWeights[enemyId] = percent / 100;
     }));

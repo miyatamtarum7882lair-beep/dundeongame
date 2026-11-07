@@ -66,10 +66,13 @@ const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
   assert.equal(ctl.tryStart({ bound: true, mp: 0 }), false);
 }
 
-// 4. 5秒で終わる。解除 → MP回復 → climaxEnd → afterglowStart の順で1回だけ
+// 4. 溜めの後に5秒続く。解除 → MP回復 → climaxEnd → afterglowStart の順で1回だけ
 {
   const { ctl, state } = make();
   ctl.tryStart({ bound: true, mp: 0 });
+  ctl.update(B.climax.chargeSec);
+  assert.equal(find(state, 'second').length, 0);
+  assert.equal(find(state, 'climaxRelease').length, 1);
   ctl.update(4.9);
   assert.equal(ctl.isClimax(), true);
   assert.equal(find(state, 'second').length, 4);
@@ -147,7 +150,7 @@ const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 {
   const { ctl, state } = make();
   ctl.tryStart({ bound: true, mp: 0 });
-  ctl.update(2);
+  ctl.update(B.climax.chargeSec + 2);
   ctl.abort();
   assert.equal(ctl.isClimax(), false);
   assert.equal(find(state, 'release').length, 0);
@@ -192,7 +195,7 @@ const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 {
   const { ctl, state } = make();
   ctl.tryStart({ bound: true, mp: 0 });
-  ctl.update(2);
+  ctl.update(B.climax.chargeSec + 2);
   assert.equal(ctl.extend(), 5);
   near(ctl.duration, 10);
   assert.equal(ctl.extend(), 0, 'total cap');
@@ -222,7 +225,7 @@ const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
     },
   });
   ctl.tryStart({ bound: true, mp: 0 });
-  ctl.update(5);
+  ctl.update(B.climax.chargeSec + 5);
   assert.equal(ctl.isClimax(), true, 'still climaxing after extension at 0s');
   assert.equal(find(state, 'release').length, 0);
   ctl.update(100);
@@ -235,12 +238,12 @@ const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 {
   const { ctl } = make();
   ctl.tryStart({ bound: true, mp: 0 });
-  ctl.update(5);
+  ctl.update(B.climax.chargeSec + 5);
   assert.equal(ctl.isClimax(), false);
   assert.equal(ctl.extend(), 0);
 }
 
-// 17. 拘束者数による倍率と tick 間隔
+// 17. 拘束者数による倍率。拘束ターンは絶頂中も2秒間隔を維持
 {
   near(climaxDrainMult(0, 1), B.climax.drainMultStart);
   near(climaxDrainMult(1, 1), B.climax.drainMultEnd);
@@ -248,14 +251,14 @@ const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
   const { ctl } = make();
   assert.equal(ctl.boundTickSec(), B.bound.tickSec);
   ctl.tryStart({ bound: true, mp: 0 });
-  assert.equal(ctl.boundTickSec(), B.climax.tickSec);
+  assert.equal(ctl.boundTickSec(), B.bound.tickSec);
 }
 
 // 18. onSecond に拘束者数と倍率が渡る
 {
   const { ctl, state } = make({ binders: 3 });
   ctl.tryStart({ bound: true, mp: 0 });
-  ctl.update(1);
+  ctl.update(B.climax.chargeSec + 1);
   const info = find(state, 'second')[0][1];
   assert.equal(info.binderCount, 3);
   near(info.drainMult, climaxDrainMult(info.progress, 3));

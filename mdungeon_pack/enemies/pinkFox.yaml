@@ -1,0 +1,177 @@
+id: pinkFox
+name: ピンク髪きつねちゃん
+attr: 尻
+rank: basic
+concept: 押し返しを崩す勝ち気な狐娘
+appearance:
+  summary: ピンク髪と金色の瞳、狐耳と尻尾、白とグレーの装備を持つ成人女性。
+  charmPoint: 大きなお尻を強調した振り返りと背面攻撃。
+personality:
+  archetype: 勝ち気で意地悪な狐娘
+  traits:
+  - 負けず嫌い
+  - ヒップアタックが得意
+  - 失敗するとムキになる
+  speech:
+    firstPerson: あたし
+    heroCall: キミ
+    tone: 勝ち気で挑発的。
+    endings:
+    - ～だよ♡
+    - ～でしょ？
+    avoid:
+    - 幼児語
+  sampleLines:
+    encounter: 避けられるかな？
+    bind: つっかまえたぁ♡
+    drain: 押し返せないの？
+    familiar: また挑戦するんだ？
+    rememberUse: この技、前も避けられなかったよね？
+    defeat: あたしの勝ちっ♪
+behavior:
+  style: ヒップアタックで体勢崩しと尻圧慣れを蓄積し、背面拘束へ。
+  drainFeel: 強く押し込まれ継続MPを奪われる。
+skills:
+  normal:
+    name: きつねステップ
+    note: 軽い近接攻撃。
+    evolution:
+      conditionType: repeated_use
+      condition: 「きつねステップ」で累積命中が基準に到達
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: きつねステップ・改
+      upgradedEffect: 固有状態異常への連携を強化
+      counterplay: 予備動作・回避・解除を維持
+      status: 提案
+  bind:
+    name: 背面すりすり
+    note: 上下左右の隣接から予備動作後に背面へ回り、お尻を擦りつけるような動作で拘束し、MPを継続吸収。MP0フィニッシュで大量経験値ドレインと敵強化。
+    evolution:
+      conditionType: finish
+      condition: 「背面すりすり」でMP0フィニッシュに成功
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: 背面すりすり・改
+      upgradedEffect: MP吸収・拘束の強化
+      counterplay: 予備動作・回避・解除を維持
+      status: 提案
+  specials:
+  - name: きつねヒップアタック
+    kind: 近接
+    range: 近い
+    windup: あり
+    effect: 体勢崩しと尻圧慣れを蓄積。
+    impression: 繰り返すほど次の拘束が危険になる。
+    power: 弱
+    evolution:
+      conditionType: debuff_max
+      condition: この技の反復命中で「尻圧慣れ」蓄積をMAXにする
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: きつねヒップアタック・改
+      upgradedEffect: 主力デバフ蓄積または拘束連携を強化
+      counterplay: 回避・拒否・解除を維持
+      status: 提案
+  - name: ほら、押し返してみなよ♡
+    kind: 状態異常
+    range: 近い
+    windup: なし
+    effect: 力比べ。失敗すると尻圧慣れが進む。
+    impression: 繰り返すほど次の拘束が危険になる。
+    power: 中
+    evolution:
+      conditionType: choice_count
+      condition: 主人公が「ほら、押し返してみなよ♡」で自発的受容または力比べ敗北を規定回数選択・経験する
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: ほら、押し返してみなよ♡・改
+      upgradedEffect: 主力デバフ蓄積または拘束連携を強化
+      counterplay: 回避・拒否・解除を維持
+      status: 提案
+      alternativeConditions:
+      - conditionType: manual_accept_count
+        condition: この技の選択肢で受け入れるを累計3回選ぶ（提案）
+        counterScope: 敵個体・技単位
+      - conditionType: timeout_accept_count
+        condition: この技の選択肢を6秒放置して自動受容を累計4回発生させる（提案）
+        counterScope: 敵個体・技単位
+      conditionLogic: 従来条件 OR 自発的受容回数 OR タイムアウト受容回数（進化は一度のみ）
+    interactiveChoice:
+      enabled: true
+      mode: oneIllustrationWithDialogue
+      illustration: reference_images/pinkFox.jpg
+      dialogue: 押し返してみなよ。勝てると思う？
+      trigger: 技の予備動作成立時、技処理の直前。1回の技発動につき最大1回
+      choices:
+      - id: resist
+        label: 避ける／振り切る／断る（技に応じて表示）
+        effect: 足場を確保して押し返す
+        risk: 成功時は誘いの追加効果を防ぐ。通常の命中判定は技ごとに処理
+      - id: accept
+        label: 受け入れる
+        effect: 尻圧慣れを進めて次の拘束に隙を作る
+        risk: MPドレイン・固有デバフ蓄積が強化され、次の拘束への隙が増える
+      timer:
+        warningAtSeconds: 3
+        warningVisual: 画面周縁がピンク色に変化し、ハートが増える。残り時間を明示
+        autoAcceptAtSeconds: 6
+        timeoutAction: accept
+        timeoutDrainBonus: 通常の受容よりMPドレインを強化（倍率未定）
+        timeoutDebuffBonus: 自発的な受容より大きすぎない追加蓄積（調整案）
+        timerStarts: 選択肢表示と同時
+        timerPauses: ゲーム停止・アプリ非アクティブ・アクセシビリティ一時停止中は進行しない
+      onAcceptance:
+        debuff: 尻圧慣れ
+        growth: 敵個体の受容成功記録を進める。タイムアウト成功は別カウンター
+        nextAttack: 拘束への移行や追撃を許しやすくなる（確定連続拘束は禁止）
+      evolutionContribution:
+        voluntaryAccept: 自発的受容3回（暫定）で技進化への追加ルート
+        timeoutAccept: 時間切れ自動受容4回（暫定）で技進化への追加ルート
+        originalCondition: 従来の技固有進化条件も維持し、ORで判定
+      balance:
+        perEnemyChoiceSkillCap: 1
+        singleChoicePerCast: true
+        retriggerCooldownTurns: 提案：3～5ターン
+        skipOnRepeatCastSameEncounter: 提案：同じ戦闘で連続した選択肢の乱発は避ける
+        counterplay: 拒否を選べば自発的受容による永続悪化を回避できる
+        status: 提案
+  - name: しっぽフェイント
+    kind: 近接
+    range: 近い
+    windup: なし
+    effect: 回避を下げてヒップアタックに連携。
+    impression: 繰り返すほど次の拘束が危険になる。
+    power: 弱
+    evolution:
+      conditionType: debuff_max
+      condition: この技の反復命中で「尻圧慣れ」蓄積をMAXにする
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: しっぽフェイント・改
+      upgradedEffect: 主力デバフ蓄積または拘束連携を強化
+      counterplay: 回避・拒否・解除を維持
+      status: 提案
+  advanced:
+    name: きつねの極上ヒッププレス
+    note: 指定拘束技によるフィニッシュ成功後に永続習得。
+    evolution:
+      conditionType: unlock_from_designated_skill
+      condition: 「背面すりすり」でMP0フィニッシュを成功させる
+      scope: 敵個体ごとに永続・上位技単位
+      evolvedName: きつねの極上ヒッププレス
+      upgradedEffect: 上位技を解放
+      counterplay: 脱出可能な猶予を維持
+      status: 提案
+presentation:
+  soundImage: 軽い魔法音と魔力吸収音。
+  effectImage: 固有デバフ進行に応じてピンク・紫の視覚演出が濃くなる。
+  colorImage: ピンク、紫、白、黒
+notes: プロトタイプ初期basic敵。従来技は刷新。個別技進化・レベル漏れ癖共通ルールを適用。
+balance:
+  role: プロトタイプ初期敵
+  debuffs:
+    primary: 尻圧慣れ
+    secondary:
+    - 体勢崩し
+    shared: レベル漏れ癖
+  counterplay: 予備動作の回避、誘惑の拒否、拘束の解除
+choiceSystem:
+  selectedSkill: ほら、押し返してみなよ♡
+  maxChoiceSkills: 1
+  note: 選択肢はこの敵の指定技1つのみ。他の技は通常戦闘処理。

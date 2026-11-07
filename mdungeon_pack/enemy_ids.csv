@@ -1,0 +1,19 @@
+﻿id,name,attr,rank,concept,main_debuff,advanced_skill,reference_image
+thiefGirl,シーフちゃん,尻,basic,心と経験値を盗む生意気怪盗,経験値盗取,ハートジャック・マスター,reference_images/thiefGirl.jpg
+angelGirl,天使ちゃん,胸,unique,甘い祝福で堕落させる腹黒天使,魅了、祝福による抵抗低下,堕天の極上祝福,reference_images/angelGirl.jpg
+blueHairGal,青髪ギャル,全,unique,むちむち密着の意地悪お姉さん,脱力、移動制限,むちむちパラダイス,reference_images/blueHairGal.jpg
+mikuGirl,ミクちゃん,口,basic,甘え上手なキス泥棒,魅了,とっておきのキッス,reference_images/mikuGirl.jpg
+pleadingBunny,おねだりバニー,口,basic,恥じらうふりの経験値泥棒,魅了、経験値盗取,秘密のごほうびキッス,reference_images/pleadingBunny.jpg
+velvetBunny,ベルベットバニー,尻,unique,圧で追い詰める尻特化バニー,圧迫、萎縮,クイーンズプレッシャー,reference_images/velvetBunny.jpg
+darkSister,シスターさん,足,unique,懺悔と服従を迫る暗黒シスター,服従、罪の刻印,カウントダウン・審判,reference_images/darkSister.jpg
+powerBunny,怪力バニーさん,胸,unique,怪力突進で捕まえる豪快バニー,体勢崩し、力負けの屈辱,スーパー・バニーロケット,reference_images/powerBunny.png
+sakuraEnchantress,桜の妖女,尻,elite,甘い罠で男を破滅させる妖女,堕落、堕落の烙印,破滅の千本桜,reference_images/sakuraEnchantress.jpg
+demonicChinaGirl,魔性のチャイナ娘,胸 / 手,elite,経験値を貪る意地悪な悪女,レベル漏れ癖、敗北の烙印,魔性の経験値搾取,reference_images/demonicChinaGirl.jpg
+littleDevilLady,小悪魔お嬢さん,全,unique,油断を誘う計算高い小悪魔,油断,ロイヤル・テンプテーション,reference_images/littleDevilLady.png
+silverFoxMaid,銀狐メイドさん,足,unique,淡々と魔力を搾り取る銀狐メイド,魔力漏出、魔力漏れ体質,完全魔力徴収,reference_images/silverFoxMaid.jpg
+tricksterDevil,ずるっこ悪魔ちゃん,足,elite,搦め手で追い詰める卑怯な悪魔,体勢崩し、油断癖,デビルズ・レッグトラップ,reference_images/tricksterDevil.jpg
+kissHunter,キスハンター,口,unique,獲物を追い詰める経験値泥棒,マーキング、レベル漏れ癖,パーフェクト・ハントキッス,reference_images/kissHunter.jpg
+dreamLady,夢見のお姉さん,全,unique,優しい膝枕で眠りへ誘うお姉さん,眠気、甘え癖,永遠のおやすみ膝枕,reference_images/dreamLady.jpg
+whisperDevil,ぽしょぽしょ悪魔ちゃん,全,unique,甘い囁きで心を乱す腹黒悪魔,集中力低下、囁きへの弱さ,絶対内緒のぽしょぽしょ,reference_images/whisperDevil.jpg
+blondeBunny,グラマーバニーさん,胸,unique,胸圧で包む悪女バニー,骨抜き,クイーンズ・ぱふぱふ,reference_images/blondeBunny.jpg
+pamperingLady,甘やかしレディ,足,unique,甘い誘惑で堕落させる淑女,甘え癖（永続）、レベル漏れ癖,極上の甘やかしレッグ,reference_images/pamperingLady.jpg

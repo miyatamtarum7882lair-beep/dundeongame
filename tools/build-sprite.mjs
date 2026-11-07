@@ -173,14 +173,24 @@ function calcFeetX(data, w, h) {
 }
 
 async function scaleFrame(frame, scale) {
-  const w = Math.max(1, Math.round(frame.width * scale));
-  const h = Math.max(1, Math.round(frame.height * scale));
-  const data = await sharp(frame.buf, { raw: { width: frame.width, height: frame.height, channels: 4 } })
-    .resize(w, h, { kernel: 'lanczos3' })
-    .raw()
-    .toBuffer();
-  cutAlpha(data);
-  return { data, w, h, feetX: calcFeetX(data, w, h), measured: true };
+  // 元絵の余白や足元の偏りで64×96から切れないよう、必要なコマだけ縮める。
+  let size = scale;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const w = Math.max(1, Math.round(frame.width * size));
+    const h = Math.max(1, Math.round(frame.height * size));
+    const data = await sharp(frame.buf, { raw: { width: frame.width, height: frame.height, channels: 4 } })
+      .resize(w, h, { kernel: 'lanczos3' })
+      .raw()
+      .toBuffer();
+    cutAlpha(data);
+    const feetX = calcFeetX(data, w, h);
+    const dx = Math.round(FEET_TARGET - feetX);
+    if (w <= FRAME_W && h <= FRAME_H && dx >= 0 && dx + w <= FRAME_W) {
+      return { data, w, h, feetX, measured: true };
+    }
+    size *= 0.9;
+  }
+  throw new Error('コマを64×96に収められませんでした');
 }
 
 function flopFrame(f) {

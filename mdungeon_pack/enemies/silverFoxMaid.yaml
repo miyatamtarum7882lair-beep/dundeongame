@@ -1,0 +1,244 @@
+id: silverFoxMaid
+name: 銀狐メイドさん
+attr: 足
+rank: unique
+concept: 淡々と魔力を搾り取る銀狐メイド
+appearance:
+  summary: 銀髪・青い瞳・狐耳・尻尾・青白の和装メイド服。
+  charmPoint: 白いストッキングと黒いヒール。
+personality:
+  archetype: 冷静で意地悪な毒舌メイド
+  traits:
+  - 淡々と仕事をする
+  - 失敗を指摘
+  speech:
+    firstPerson: 提案：わたし（原シート参照）
+    heroCall: お客様
+    tone: 落ち着いた敬語
+    endings:
+    - 提案：キャラクターに応じて調整
+    avoid:
+    - 幼児的な口調
+  sampleLines:
+    encounter: 「あら、お客様。少し遊んでいきませんか？」
+    bind: 「捕まえました。もう逃げられませんよ。」
+    drain: 「魔力、いただきますね。」
+    familiar: 「またお会いしましたね。」
+    rememberUse: 「前にもこの技を受けましたよね？」
+    defeat: 「今回はわたしの勝ちですね。」
+behavior:
+  style: 魔力漏出で非拘束中もMPを減らし、足で踏み拘束。
+  drainFeel: 一定リズムでMPが失われる。
+skills:
+  normal:
+    name: メイドステップ
+    note: 基本近接攻撃。提案：主力デバフの補助。
+    evolution:
+      conditionType: repeated_use
+      condition: この通常攻撃を異なる戦闘で繰り返し命中させ、累積成功数が基準に達する
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: メイドステップ・改
+      upgradedEffect: 主力状態異常の付与補助を少し強化。ダメージ上昇は控えめ
+      counterplay: 射程管理と回避で累積を止められる
+      status: 提案
+  bind:
+    name: 魔力回収ストンプ
+    note: 隣接位置から予備動作後に拘束、継続MPドレイン。MP0フィニッシュで大量経験値吸収と敵強化。
+    evolution:
+      conditionType: finish
+      condition: 「魔力回収ストンプ」で主人公のMPを0にし、フィニッシュを成功させる
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: 魔力回収ストンプ・改
+      upgradedEffect: 拘束中MPドレインと固有状態異常への連携を強化。ただし脱出猶予は維持
+      counterplay: 予備動作への回避・解除手段・脱出猶予を維持
+      status: 提案
+      alternativeConditions:
+      - conditionType: manual_accept_count
+        condition: この技の選択肢で受け入れるを累計3回選ぶ（提案）
+        counterScope: 敵個体・技単位
+      - conditionType: timeout_accept_count
+        condition: この技の選択肢を6秒放置して自動受容を累計4回発生させる（提案）
+        counterScope: 敵個体・技単位
+      conditionLogic: 従来条件 OR 自発的受容回数 OR タイムアウト受容回数（進化は一度のみ）
+    interactiveChoice:
+      enabled: true
+      mode: oneIllustrationWithDialogue
+      illustration: reference_images/silverFoxMaid.jpg
+      dialogue: 回収にご協力いただけますか、お客様？
+      trigger: 技の予備動作成立時、技処理の直前。1回の技発動につき最大1回
+      choices:
+      - id: resist
+        label: 避ける／振り切る／断る（技に応じて表示）
+        effect: 回収動作を阻止する
+        risk: 成功時は誘いの追加効果を防ぐ。通常の命中判定は技ごとに処理
+      - id: accept
+        label: 受け入れる
+        effect: 魔力漏出の回収量が増える
+        risk: MPドレイン・固有デバフ蓄積が強化され、次の拘束への隙が増える
+      timer:
+        warningAtSeconds: 3
+        warningVisual: 画面周縁がピンク色に変化し、ハートが増える。残り時間を明示
+        autoAcceptAtSeconds: 6
+        timeoutAction: accept
+        timeoutDrainBonus: 通常の受容よりMPドレインを強化（倍率未定）
+        timeoutDebuffBonus: 自発的な受容より大きすぎない追加蓄積（調整案）
+        timerStarts: 選択肢表示と同時
+        timerPauses: ゲーム停止・アプリ非アクティブ・アクセシビリティ一時停止中は進行しない
+      onAcceptance:
+        debuff: 魔力漏れ体質
+        growth: 敵個体の受容成功記録を進める。タイムアウト成功は別カウンター
+        nextAttack: 拘束への移行や追撃を許しやすくなる（確定連続拘束は禁止）
+      evolutionContribution:
+        voluntaryAccept: 自発的受容3回（暫定）で技進化への追加ルート
+        timeoutAccept: 時間切れ自動受容4回（暫定）で技進化への追加ルート
+        originalCondition: 従来の技固有進化条件も維持し、ORで判定
+      balance:
+        perEnemyChoiceSkillCap: 1
+        singleChoicePerCast: true
+        retriggerCooldownTurns: 提案：3～5ターン
+        skipOnRepeatCastSameEncounter: 提案：同じ戦闘で連続した選択肢の乱発は避ける
+        counterplay: 拒否を選べば自発的受容による永続悪化を回避できる
+        status: 提案
+  specials:
+  - name: 魔力漏出処理
+    kind: 状態異常
+    range: 中
+    windup: あり
+    effect: ターンごとMP減少
+    impression: 提案：ターンごとMP減少ため、対策を要求する。
+    power: 中
+    evolution:
+      conditionType: debuff_max
+      condition: この技の反復命中で「魔力漏れ体質」の進行度をMAXに到達させる（同じ敵個体の技による到達を記録）
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: 魔力漏出処理・改
+      upgradedEffect: 「魔力漏れ体質」の蓄積効率と発症時の連携を強化。初回被弾は原則軽微・予兆中心に留める
+      counterplay: 予備動作・距離管理・解除を通じて進化前後とも対抗可能
+      status: 提案
+  - name: お行儀が悪いですね
+    kind: 状態異常
+    range: 近い
+    windup: なし
+    effect: 萎縮と永続デバフの誘発
+    impression: 提案：萎縮と永続デバフの誘発ため、対策を要求する。
+    power: 中
+    evolution:
+      conditionType: status_onset
+      condition: この技が付与する状態異常を累積で規定回数発症させる（魔力漏れ体質の進行度を参照）
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: お行儀が悪いですね・改
+      upgradedEffect: 状態異常の予兆と連携技を強化するが、状態異常の継続時間上限は維持
+      counterplay: 予備動作・距離管理・解除を通じて進化前後とも対抗可能
+      status: 提案
+  - name: 定期回収のお時間です
+    kind: その他
+    range: 近い
+    windup: あり
+    effect: 蓄積した漏出をまとめてMP回収
+    impression: 提案：蓄積した漏出をまとめてMP回収ため、対策を要求する。
+    power: 強
+    evolution:
+      conditionType: special_achievement
+      condition: 魔力漏出状態からMPを規定量回収する
+      scope: 敵個体ごとに永続・技単位
+      evolvedName: 定期回収のお時間です・改
+      upgradedEffect: 技の固有効果（追跡・解除妨害・EXP吸収など）を強化。即時確定コンボにはしない
+      counterplay: 予備動作・距離管理・解除を通じて進化前後とも対抗可能
+      status: 提案
+  advanced:
+    name: 完全魔力徴収
+    note: 指定技でのフィニッシュ成功後、その敵個体が永続的に習得。通常版よりMP吸収・固有状態異常・戦闘能力が強化される。
+    evolution:
+      conditionType: unlock_from_designated_skill
+      condition: 指定技「魔力回収ストンプ」で主人公をフィニッシュさせる（既存の永続習得ルール）
+      scope: 敵個体ごとに永続・上位技単位
+      evolvedName: 完全魔力徴収
+      upgradedEffect: 上位技を解放する。通常技や特殊技の個別進化とは別フラグで管理する
+      counterplay: 習得後も警告・脱出・状態異常解除の手段を必ず保持
+      status: 提案：一部指定技以外は既存ルールを踏襲
+presentation:
+  soundImage: 提案：衣擦れ、技固有の効果音、吸収音。
+  effectImage: 提案：キャラのイメージカラーによる魔力粒子と吸収演出。
+  colorImage: 銀、紺、白、アイスブルー
+notes: 得意デバフ：魔力漏出、魔力漏れ体質。共通ルールはCOMMON_RULES.md参照。元の会話のコンセプトシートを要約・再構成した保存用ファイル（逐語転記ではない）。未確定要素は提案。
+balance:
+  role: 継続MP減少・回収
+  threat:
+    mobility: 低
+    bindPressure: 中
+    directExpDrain: 中
+    persistentDebuff: 中
+  debuffs:
+    primary: 魔力漏出
+    secondary:
+    - 魔力漏れ体質
+    - 萎縮
+    shared: レベル漏れ癖（全経験値ドレインに共通）
+  temptation:
+    playerChoice: 漏出を無視して長く居座る
+    spiral: 少しなら平気と放置するほど被害が増える
+    cost: 提案：自発的な不利行動により一時デバフを強化。繰り返すと条件つき永続デバフと敵個体強化につながる
+  counterplay: 漏出を早めに解除し、まとめて回収する技を阻止する
+  tuning:
+    intendedTier: unique
+    uniqueStrength: 継続MP減少・回収
+    safeFailureRule: 失敗が数回続いても解除手段か離脱手段を必ず残す
+  addedOrReworkedTechnique:
+    name: 定期回収のお時間です
+    effect: 漏出を回収してMPを一括吸収する。
+    status: 既存技なら調整提案／それ以外は追加提案
+  persistentSystem:
+    name: 魔力漏れ体質
+    classification: キャラ固有・永続デバフ（提案）
+    trigger: 自発的な不利行動を反復したとき。単発の通常ミスでは即時付与しない
+    temptationChoice: 回収を予告されても対処せず放置する
+    stages:
+      I: 弱点が生まれる。専用対抗行動で治療可
+      II: 弱点が定着。治療素材＋専用対抗行動が必要
+      III: 複数戦に影響。専用試練＋素材＋再戦が必要
+      IV: 最深段階。特別試練でIIIへ、以降も一段ずつ治療
+    recoveryTrial: 魔力漏出を解除し定期回収を阻止する
+    recoveryCost: I:対抗行動の達成／II:対抗行動+希少素材／III:専用試練+希少素材／IV:特別試練+希少素材。段階を1つずつ下げる
+    antiSoftlock: 敵の強化が進んでも、追放・解除・逃走・対抗行動のうち少なくとも一つは残す
+    enemyGainOnTrigger: 魔力漏出の蓄積強化（大きさは成長段階で制限）
+  enemyGrowth:
+    expFinish: MP0フィニッシュで敵個体が大量EXPを取得し、永続的に1段階進行（同一戦闘の重複加算は抑制）
+    voluntaryLoss: 自発的な敗北／降伏を成立させると、通常フィニッシュとは別の「支配経験」進捗を獲得（ただし同一行為で無制限に重複しない）
+    tier0: 初期能力、固有技に明瞭な予告と対処手段
+    tier1: 固有技に小さな追加効果、見た目と台詞が変化
+    tier2: 戦法の選択肢が増える。強制コンボ・確定拘束は禁止
+    tier3: 専用の強化形を開放。ただし解除・反撃・逃走手段を残す
+    advancedRule: 指定技のフィニッシュで上位技を永続習得。各通常・特殊技は個別の進化条件を持ち、フィニッシュ以外で進化する場合もある。
+    mitigation: 敵個体の成長は原則永続。討伐／特別な浄化儀式で一部減衰させる救済ルートを提案
+    powerBudget:
+      basic: 固有強化は狭い条件に限定
+      unique: 主軸を強化し補助性能は据え置く
+      elite: 複合効果を持てるが確定連鎖は禁止
+    specialization: 魔力漏出の蓄積強化
+  conditioning:
+    name: 魔力漏れ体質
+    sourceTechnique: 魔力漏出処理
+    firstHits: 提案：1～2命中時は蓄積表示だけ。追加の状態異常・MP吸収を起こさない（元の攻撃の基礎効果は別途調整）。
+    buildupStages:
+      early: 1～2回：ゲージのみ上昇、発症なし
+      warning: 3～4回：前兆と明瞭な警告
+      onset: 5～6回：行動するたびMPが少しずつ漏れ始める
+      danger: 7回以上：永続化の危険域。自発的に受け入れる・複数遭遇で発症反復すると永続化
+    persistentDebuff: 魔力漏れ体質：MP継続減少に対する耐性低下
+    bindCombo: 魔力回収ストンプで残MPを回収
+    voluntarySpiral: 回収を受け入れて解除行動を放棄
+    counterplay: 漏出を解除して一度距離を取る
+    recoveryTrial: 漏出を止めて定期回収を阻止して勝つ
+    enemyGrowthBenefit: 定期回収の効率が上昇
+    status: 追加提案（既存技・共通仕様を置き換えずに補完）
+  techniqueEvolution:
+    rule: 各技は個別条件を満たした時だけ進化。上位技の解放は別フラグ。いずれも同じ敵個体で永続保存する
+    conditioningName: 魔力漏れ体質
+    maxDefinition: 固有の蓄積値MAX（v4の危険域到達）。永続デバフ段階IVとは別。MAX到達だけで技進化しても、永続デバフの定着にはv4の条件が必要
+    stackingRule: 固有デバフMAXと経験値直接吸収の達成は技ごとに独立。1つの技を進化させても他技が自動進化しない
+    powerBudget: basic=技の進化で1効果のみ、unique=主力技を中程度強化、elite=技間シナジーを強化するが確定連鎖は禁止
+    reference: TECHNIQUE_EVOLUTION_GUIDE_V5.md
+choiceSystem:
+  selectedSkill: 魔力回収ストンプ
+  maxChoiceSkills: 1
+  note: 選択肢はこの敵の指定技1つのみ。他の技は通常戦闘処理。

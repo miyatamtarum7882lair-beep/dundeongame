@@ -35,9 +35,6 @@ export const ENEMY_DIALOGUE = {
       timeoutLine: 'もう夢中みたいね。'
     },
     speech: 'ふふ、いい顔。'
-  },
-  nurse: {
-    speech: 'すぐに楽になりますよ。'
   }
 };
 
