@@ -314,7 +314,6 @@ export class Exploration extends Emitter {
 
   beginTurn() {
     for (const u of this.units) u.beginTurn();
-    this.combat.heroTurnStart();
     this.combat.beginTurn();
   }
 

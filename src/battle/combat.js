@@ -19,7 +19,7 @@ import { ClimaxController } from './climaxController.js';
 import { BuffManager, BUFFS, BUFF_IDS } from './buffs.js';
 import { loseHeroExp } from './expDrain.js';
 import { FlashbackController } from './flashback.js';
-import { FLASHBACK_STRONG } from '../data/flashbackData.js';
+import { FLASHBACK_STRONG } from '../data/flashbackRules.js';
 
 const WEAPON_NAMES = { sword: '剣', fist: '拳' };
 const ALLY_NAMES = { priest: '僧侶', mage: '魔法使い' };
@@ -74,7 +74,12 @@ export class Combat extends Emitter {
     });
     this.climax.restore({ afterglowTurns: run().afterglowTurns ?? 0 });
     this.flashback = new FlashbackController({
+      cfg: this.B.flashbackFx,
       getMode: () => this.save.settings.flashback ?? 'full',
+      getFloorKey: () => {
+        const r = this.save.currentRun;
+        return `${r.seed}:${r.dungeon}:${r.floor}`;
+      },
       emit: (name, payload) => this.emit(name, payload),
       isBlocked: () => this.climax.isClimax() || this.climax.isAfterglow()
     });
@@ -123,17 +128,14 @@ export class Combat extends Emitter {
     this.escapeInvulnTurns = 0;
     this.buffs.restore(this.save.currentRun.buffs ?? []);
     this.climax.restore({ afterglowTurns: this.save.currentRun.afterglowTurns ?? 0 });
-    this.flashback.resetFloor();
+    this.flashback.cancel();
+    this.flashback.syncFloor();
   }
 
   beginTurn() {
     this.beat = 0;
     this.actedThisTurn = false;
     this.guarding = false;
-  }
-
-  heroTurnStart() {
-    this.flashback.onHeroTurn();
   }
 
   // ---- 主人公の行動 ----
@@ -232,7 +234,8 @@ export class Combat extends Emitter {
   requestFlashback(kind, enemy, attr, skillId = null) {
     this.flashback.request({
       kind,
-      enemyId: enemy.speciesId,
+      enemyId: enemy.id ?? enemy.speciesId,
+      speciesId: enemy.speciesId,
       attr,
       skillId,
       tx: enemy.tx,
@@ -1029,7 +1032,7 @@ export class Combat extends Emitter {
     this.stunTurns = 0;
     this.climax.reset();
     this.buffs.clear();
-    this.flashback?.cancel();
+    this.flashback.reset();
     this.emit('persist');
   }
 }

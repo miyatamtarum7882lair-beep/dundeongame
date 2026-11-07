@@ -118,11 +118,12 @@ export const B = deepFreeze({
     sexyPose: { mpRate: 0.04, range: 3, allyCharm: 10, windup: true }
   },
   debuffPanel: {
-    rowH: 28,
+    columns: 3,
+    chipW: 180,
+    chipH: 34,
+    gap: 6,
     maxRows: 8,
-    glowFrom: 0.34,
-    maxGlow: 0.30,
-    pulseSec: 2.6
+    majorFrom: 0.55
   },
   weapons: {
     sword: { minRate: 0.08, maxRate: 0.24 },
@@ -359,28 +360,56 @@ export const B = deepFreeze({
     },
     bound: { strapAlpha: 0.28, pulseAlpha: 0.2 }
   },
-  flashback: {
-    durSec: 3,
-    inSec: 0.1,
-    startMul: 0.8,
-    endMul: 1.5,
-    fitRatio: 0.6,
-    zoomMin: 0.5,
-    zoomMax: 2.0,
-    maxTintAlpha: 0.25,
-    minIntervalSec: 8,
-    cropMargin: 1.6,
-    cropMaxPx: 1536,
-    featherStart: 0.7,
-    heartsOn: ['charm'],
-    heartRing: 6,
-    heartPerSpot: 2,
-    reduced: { zoomScale: 0.6, endMul: 1.1, tintScale: 0.5 },
+  flashbackFx: {
+    minGapSec: 2.2,
     erectTurns: 3,
-    portraitWaitMs: 250,
-    maxZoom: 2.6,
-    reducedMaxZoom: 1.6,
-    noiseFps: 12
+    inputLockSec: 0.35,
+    riseSec: 0.3,
+    holdSec: 0.5,
+    durationSec: { touch: 1.3, strong: 1.7, rematch: 1.5, bind: 1.5 },
+    kindScale: { touch: 0.85, strong: 1, rematch: 0.95, bind: 1 },
+    reducedScale: 0.6,
+    warp: { enabled: true },
+    art: {
+      sizePx: 620,
+      alpha: 1.0,
+      echoAlpha: 0.4,
+      echoCount: 2,
+      echoLagSec: 0.14,
+      pushIn: 0.12,
+      pulseHz: 1.1,
+      pulseAmp: 0.02,
+      driftPx: 14,
+      glowAlpha: 0.28,
+      outputPx: 512
+    },
+    hearts: {
+      beats: 2,
+      beatGapSec: 0.2,
+      popAmp: 0.22,
+      popAttackSec: 0.05,
+      popDecaySec: 0.3,
+      sizePx: 280,
+      fillAlpha: 0.16,
+      lineAlpha: 0.55,
+      lineWidthPx: 5,
+      ringAlpha: 0.4,
+      ringMaxPx: 560,
+      ringLifeSec: 0.7,
+      smallCount: 14,
+      smallSizePx: [14, 30],
+      smallReachPx: [180, 340],
+      smallLifeSec: 1.0,
+      smallAlpha: 0.75
+    },
+    full: {
+      blurPx: 4,
+      invert: 0.15,
+      desaturate: 0.4,
+      dim: 0.3,
+      warpScale: 12
+    },
+    reduced: { artAlpha: 0.35 }
   },
   buffs: {
     durationTurns: 20

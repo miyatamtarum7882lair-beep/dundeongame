@@ -30,6 +30,9 @@ import { BattleFx } from './ui/battleFx.js';
 import { DrainFx } from './ui/drainFx.js';
 import { bindSideOf } from './ui/boundCharmMath.js';
 import { Heartbeat } from './core/heartbeat.js';
+import { InputGate } from './core/inputGate.js';
+import { FlashbackFx } from './ui/flashbackFx.js';
+import { buildCharmCanvas } from './ui/charmCanvas.js';
 import { drawEnemyLabels } from './ui/enemyLabels.js';
 import { drawPartyPanel } from './ui/partyPanel.js';
 import { drawDebuffPanel } from './ui/debuffPanel.js';
@@ -94,6 +97,15 @@ eventState.on('watchdog', (owner) => {
 });
 
 const combat = exploration.combat;
+const flashbackFx = new FlashbackFx({
+  cfg: B.flashbackFx,
+  render: B.render,
+  getTargets: () => (layers.pixel ? [layers.pixel] : [])
+});
+const inputGate = new InputGate({
+  lockSec: B.flashbackFx.inputLockSec,
+  isActive: () => combat.flashback.isErect()
+});
 timeMode.tickSecProvider = () => combat.climax.boundTickSec();
 let boundPortraitLoading = false;
 let titleActive = false;
@@ -106,6 +118,22 @@ const charmCfg = {
 async function loadEnemyPortrait(speciesId) {
   await preloadPortrait(speciesId);
   return getPortrait(speciesId);
+}
+async function attachFlashbackArt(id, speciesId, attr, skillId, tx, ty) {
+  try {
+    const hero = exploration.hero;
+    const side = bindSideOf(tx - hero.tx, ty - hero.ty, hero.dir);
+    const img = await loadEnemyPortrait(speciesId);
+    if (!img) return;
+    const point = getCharmPointsForAttr(save.persistent, speciesId, attr, B.charm, skillId)[0];
+    const canvas = buildCharmCanvas(img, point, {
+      ...charmCfg,
+      outputPx: B.flashbackFx.art.outputPx
+    }, side);
+    flashbackFx.setArt(id, canvas);
+  } catch (error) {
+    console.error('フラッシュバックの絵を読み込めませんでした', error);
+  }
 }
 const boundCharm = new BoundCharmView({
   cfg: charmCfg,
@@ -189,12 +217,17 @@ combat.on('persist', () => {
   save.currentRun.afterglowTurns = combat.climax.serialize().afterglowTurns;
   scheduleSave(save);
 });
-combat.on('flashbackStart', ({ attr, mode, tx, ty }) => {
-  if (mode === 'off') return;
+combat.on('flashbackStart', ({ kind, attr, skillId, speciesId, mode, durationSec, tx, ty }) => {
   const position = spatialAudioOptions(tx, ty);
   audio.playSE('flashback');
   const seId = flashbackSeFor(attr);
   if (seId) audio.playSE(seId, position);
+  const id = flashbackFx.start({ kind, attr, mode, durationSec });
+  if (id && speciesId) void attachFlashbackArt(id, speciesId, attr, skillId, tx, ty);
+});
+combat.on('flashbackCancel', () => {
+  flashbackFx.cancel();
+  inputGate.clear();
 });
 combat.on('boundStart', () => {
   boundPortraitLoading = true;
@@ -366,7 +399,7 @@ function handleInput() {
     }
     exploreActions.push(ev);
   }
-  exploration.handleEvents(exploreActions, canExplore());
+  exploration.handleEvents(exploreActions, canExplore() && inputGate.canAct());
 
   for (const code of input.drainRaw()) {
     if (code === 'F3') debugHud.toggle();
@@ -535,6 +568,7 @@ function render() {
   const { gPixel, gHires } = beginFrame(layers, B);
   dungeonView.draw(gPixel, exploration, battleFx.offset);
   battleFx.drawTint(gHires);
+  flashbackFx.drawArt(gHires);
   drainFx.drawEdge(gHires);
   drawEnemyLabels(gHires, dungeonView, save.persistent, B);
   battleFx.drawWorld(gHires);
@@ -549,10 +583,14 @@ function render() {
     buildStatusEntries({
       buffs: combat.buffs.entries(),
       afterglowTurns: combat.climax.afterglowLeft,
-      erectTurns: combat.flashback.erectTurnsLeft()
-    })
+      erectTurns: combat.flashback.erectTurnsLeft(),
+      erectTotalTurns: combat.flashback.erectTotalTurns(),
+      buffTurns: B.buffs.durationTurns
+    }),
+    { width: B.render.logicalWidth, height: B.render.logicalHeight, fontFamily: B.ui.fontFamily }
   );
   drawPartyPanel(gHires, exploration, B);
+  flashbackFx.drawOverlay(gHires);
   const minimapBottom = 16 + exploration.map.h * B.explore.minimapScale + 24;
   drawDebuffPanel(gHires, save.persistent, B, {
     time: clock.time,
@@ -570,14 +608,22 @@ function loop(nowMs) {
   requestAnimationFrame(loop);
   const dt = clock.tick(nowMs);
   debugHud.update(clock.realDtSec);
+  inputGate.update(dt);
   handleInput();
   timeMode.update(dt);
   combat.climax.update(dt);
   combat.flashback.update(dt);
   eventState.update(clock.time);
-  exploration.update(dt, input, canExplore());
+  const turnBefore = exploration.turnCount;
+  const erectBeforeTurn = combat.flashback.erectTurnsLeft();
+  exploration.update(dt, input, canExplore() && inputGate.canAct());
+  if (!combat.bound && timeMode.mode === 'TURN' && exploration.turnCount !== turnBefore) {
+    inputGate.onAction(Math.max(0, exploration.busySec ?? 0));
+    if (erectBeforeTurn > 0) combat.flashback.onHeroTurn();
+  }
   dungeonView.update(dt, exploration);
   battleFx.update(dt);
+  flashbackFx.update(dt);
   drainFx.update(dt);
   heartbeat.update(dt, {
     mpRatio: heroMpRatio(),

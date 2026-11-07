@@ -22,13 +22,6 @@ export function normalizeAttr(attr) {
 }
 
 // 「特に強力な技」。ここに入れた技が発動すると kind: 'strong' のフラッシュバックを要求する。
-export const FLASHBACK_STRONG = new Set([
-  'levelDrainKiss',
-  'deepDrainKiss',
-  'pinkBreath',
-  'foxPounce',
-]);
-
 // 属性ごとの付随SE（seTable.js に存在する ID）。
 const ATTR_SE = {
   mouth: 'kissDrain',

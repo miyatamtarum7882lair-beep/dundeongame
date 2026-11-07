@@ -1,243 +1,258 @@
 // File: src/ui/flashbackFx.js
-import { B } from '../data/balance.js';
-import { flashbackColorFor } from '../data/flashbackData.js';
+import {
+  envelope, visualParams, buildFilter, motionFor,
+  beatTimes, beatScale, ringProgress, smallHeartAlpha
+} from '../core/flashbackMath.js';
+import { tintFor } from '../data/flashbackRules.js';
 
-const W = 1280;
-const H = 720;
-const NOISE_W = 160;
-const NOISE_H = 90;
+const NS = 'http://www.w3.org/2000/svg';
+const TAU = Math.PI * 2;
 
-function clamp01(v) {
-  return Math.max(0, Math.min(1, v));
+const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+const lighten = (c, k) => c.map((v) => Math.round(v + (255 - v) * k));
+
+function svgNode(tag, attrs) {
+  const node = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+  return node;
 }
 
-function easeOut(t) {
-  const x = clamp01(t);
-  return 1 - (1 - x) * (1 - x);
+// 中心 (cx, cy)、s は幅のおよそ半分
+function heartPath(g, cx, cy, s) {
+  g.beginPath();
+  g.moveTo(cx, cy + s * 0.9);
+  g.bezierCurveTo(cx - s * 1.3, cy + s * 0.1, cx - s * 0.9, cy - s * 0.9, cx, cy - s * 0.35);
+  g.bezierCurveTo(cx + s * 0.9, cy - s * 0.9, cx + s * 1.3, cy + s * 0.1, cx, cy + s * 0.9);
+  g.closePath();
 }
-
-/** 0..1 の進行度に対する全体の強さ。素早く立ち上がり、後半で減衰する。 */
-export function flashEnvelope(t) {
-  const x = clamp01(t);
-  const attack = clamp01(x / 0.06);
-  const release = x > 0.6 ? 1 - (x - 0.6) / 0.4 : 1;
-  return attack * clamp01(release);
-}
-
-/** 色反転フラッシュ（0〜0.12秒と0.22〜0.32秒の2回）。 */
-export function invertPulse(sec) {
-  const pulse = (a, b) => (sec >= a && sec < b ? 1 - (sec - a) / (b - a) : 0);
-  return Math.max(pulse(0, 0.12), 0.7 * pulse(0.22, 0.32));
-}
-
-/** チャームポイント (cx, cy: 画像内 0..1) を pivot に合わせる描画矩形。 */
-export function charmTransform({
-  imgW,
-  imgH,
-  cx,
-  cy,
-  zoom,
-  pivot = { x: W / 2, y: H * 0.46 },
-  baseH = 760,
-}) {
-  const s = (baseH / imgH) * zoom;
-  const w = imgW * s;
-  const h = imgH * s;
-  return { x: pivot.x - cx * w, y: pivot.y - cy * h, w, h };
-}
-
-function heartPath(ctx, x, y, s) {
-  ctx.beginPath();
-  ctx.moveTo(x, y + s * 0.35);
-  ctx.bezierCurveTo(x - s, y - s * 0.3, x - s * 0.5, y - s, x, y - s * 0.4);
-  ctx.bezierCurveTo(x + s * 0.5, y - s, x + s, y - s * 0.3, x, y + s * 0.35);
-  ctx.closePath();
-}
-
-const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a.toFixed(3)})`;
 
 export class FlashbackFx {
   /**
-   * @param {object} deps
-   * @param {(enemyId: string) => Promise<({img: CanvasImageSource & {width:number,height:number}, cx: number, cy: number, release?: () => void} | null)>} deps.loadPortrait
-   *   一枚絵とチャームポイントを返す。portraitLoader.js の読込を使い、release() で解放すること。
+   * @param {object} o
+   * @param {object} o.cfg B.flashbackFx
+   * @param {{logicalWidth:number, logicalHeight:number}} o.render B.render
+   * @param {() => Array<HTMLElement>} [o.getTargets] 暗転・ぼかし・ゆがみをかけるキャンバス（ドット絵レイヤー）
    */
-  constructor({ loadPortrait }) {
-    this.loadPortrait = loadPortrait;
-    this.cur = null;
-    this.token = 0;
-    this.noise = null;
-    this.noiseAcc = 0;
+  constructor({ cfg, render, getTargets = () => [] }) {
+    this.cfg = cfg;
+    this.render = render;
+    this.getTargets = getTargets;
+    this.active = null;
+    this.saved = new Map();
+    this.warpEl = null;
+    this.seq = 0;
   }
 
-  isActive() {
-    return Boolean(this.cur);
+  /** @returns {number} この演出のID。0 は演出なし。絵を後から渡すときに使う */
+  start({ kind, attr, mode, durationSec }) {
+    const p = visualParams(mode ?? 'full', this.cfg);
+    if (!p || !(durationSec > 0)) {
+      this.cancel();
+      return 0;
+    }
+    this.seq += 1;
+    this.active = {
+      id: this.seq,
+      mode,
+      attr,
+      age: 0,
+      total: durationSec,
+      p,
+      art: null,
+      tint: tintFor(attr),
+      scale: this.cfg.kindScale?.[kind] ?? 1,
+      hearts: p.hearts ? this.buildHearts(p.hearts, durationSec) : null
+    };
+    return this.seq;
   }
 
-  /** flashbackStart イベントのペイロードを渡す。mode が 'off' なら何も描かない。 */
-  async start(req) {
-    this.stop();
-    if (req.mode === 'off') return;
-    const token = ++this.token;
-    const cur = { ...req, elapsed: 0, ready: false, portrait: null };
-    this.cur = cur;
+  // 拍の時刻と、拍ごとに飛び出す小さなハートを、開始時に決める
+  buildHearts(h, total) {
+    const times = beatTimes(this.cfg.riseSec, h);
+    const small = [];
+    for (let i = 0; i < h.smallCount; i += 1) {
+      const t0 = times[i % times.length] + rand(0, 0.08);
+      small.push({
+        t0,
+        life: Math.min(h.smallLifeSec * rand(0.85, 1.15), Math.max(0.2, total - t0 - 0.05)),
+        angle: rand(0, TAU),
+        reach: rand(h.smallReachPx[0], h.smallReachPx[1]),
+        size: rand(h.smallSizePx[0], h.smallSizePx[1]),
+        sway: rand(0, TAU)
+      });
+    }
+    return { times, small };
+  }
 
-    const load = Promise.resolve(this.loadPortrait(req.enemyId)).catch((err) => {
-      console.warn('[FlashbackFx] 一枚絵の読込に失敗。ベクター描画にフォールバック', err);
-      return null;
+  /** 読み込みが終わった絵を渡す。別の演出に切り替わっていたら無視する */
+  setArt(id, canvas) {
+    if (this.active && this.active.id === id) this.active.art = canvas;
+  }
+
+  cancel() {
+    this.active = null;
+    for (const [el, prev] of this.saved) {
+      if (el?.style) el.style.filter = prev;
+    }
+    this.saved.clear();
+    this.warpEl?.setAttribute('scale', '0');
+  }
+
+  level(a) {
+    const holdSec = a.mode === 'reduced' ? 0 : this.cfg.holdSec ?? 0;
+    return envelope(a.age, a.total, this.cfg.riseSec, holdSec) * a.scale;
+  }
+
+  update(dtSec) {
+    const a = this.active;
+    if (!a) return;
+    a.age += dtSec;
+    if (a.age >= a.total) {
+      this.cancel();
+      return;
+    }
+    this.applyCss(this.level(a));
+  }
+
+  applyCss(level) {
+    const p = this.active.p;
+    const warp = p.warpScale * level;
+    const filter = buildFilter({
+      blurPx: p.blurPx * level,
+      invert: p.invert * level,
+      desaturate: p.desaturate * level,
+      brightness: 1 - p.dim * level,
+      warp
     });
-    const wait = new Promise((resolve) =>
-      setTimeout(() => resolve(null), B.flashback.portraitWaitMs)
-    );
-    const got = await Promise.race([load, wait]);
-
-    if (token !== this.token) {
-      got?.release?.();
-      return;
-    }
-    if (got) {
-      cur.portrait = got;
-    } else {
-      // 間に合わなかった場合はベクター描画。遅れて届いた画像は解放する
-      load.then((late) => late?.release?.());
-    }
-    cur.ready = true;
-  }
-
-  stop() {
-    this.token += 1;
-    this.cur?.portrait?.release?.();
-    this.cur = null;
-  }
-
-  update(dt) {
-    const c = this.cur;
-    if (!c || !c.ready) return;
-    c.elapsed += dt;
-    if (c.elapsed >= B.flashback.durSec) {
-      this.stop();
-      return;
-    }
-    this.noiseAcc += dt;
-    if (this.noiseAcc >= 1 / B.flashback.noiseFps) {
-      this.noiseAcc = 0;
-      this.refreshNoise();
+    if (p.warpScale > 0) this.setWarp(warp);
+    for (const el of this.getTargets()) {
+      if (!el?.style) continue;
+      if (!this.saved.has(el)) this.saved.set(el, el.style.filter);
+      el.style.filter = filter || this.saved.get(el) || '';
     }
   }
 
-  ensureNoise() {
-    if (this.noise || typeof document === 'undefined') return;
-    const canvas = document.createElement('canvas');
-    canvas.width = NOISE_W;
-    canvas.height = NOISE_H;
-    const ctx = canvas.getContext('2d');
-    this.noise = { canvas, ctx, data: ctx.createImageData(NOISE_W, NOISE_H) };
+  setWarp(scale) {
+    if (!this.warpEl) {
+      const svg = svgNode('svg', { width: 0, height: 0, 'aria-hidden': 'true' });
+      svg.style.position = 'absolute';
+      const filter = svgNode('filter', {
+        id: 'fbWarp', x: 0, y: 0, width: '100%', height: '100%',
+        'color-interpolation-filters': 'sRGB'
+      });
+      filter.append(
+        svgNode('feTurbulence', {
+          type: 'fractalNoise', baseFrequency: '0.006 0.04', numOctaves: 1, seed: 3, result: 'n'
+        })
+      );
+      this.warpEl = svgNode('feDisplacementMap', {
+        in: 'SourceGraphic', in2: 'n', scale: 0, xChannelSelector: 'R', yChannelSelector: 'G'
+      });
+      filter.append(this.warpEl);
+      svg.append(filter);
+      document.body.append(svg);
+    }
+    this.warpEl.setAttribute('scale', scale.toFixed(2));
   }
 
-  refreshNoise() {
-    this.ensureNoise();
-    if (!this.noise) return;
-    const d = this.noise.data.data;
-    for (let i = 0; i < d.length; i += 4) {
-      const v = Math.random() * 255;
-      d[i] = v;
-      d[i + 1] = v;
-      d[i + 2] = v;
-      d[i + 3] = 255;
+  // チャームポイントの絵。HUD より下に描く（ドット絵レイヤーの直後）
+  drawArt(g) {
+    const a = this.active;
+    if (!a) return;
+    const level = this.level(a);
+    if (level <= 0.003) return;
+    const art = this.cfg.art;
+    const ap = a.p.art;
+    const { logicalWidth: lw, logicalHeight: lh } = this.render;
+    const cx = lw / 2;
+    const cy = lh / 2;
+    const [r, gr, b] = a.tint;
+
+    g.save();
+
+    // 属性色の淡い光（通常合成）
+    if (ap.glowAlpha > 0) {
+      const radius = art.sizePx * 0.7;
+      const grad = g.createRadialGradient(cx, cy, 0, cx, cy, radius);
+      grad.addColorStop(0, `rgba(${r}, ${gr}, ${b}, ${(ap.glowAlpha * level).toFixed(4)})`);
+      grad.addColorStop(1, `rgba(${r}, ${gr}, ${b}, 0)`);
+      g.fillStyle = grad;
+      g.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
     }
-    this.noise.ctx.putImageData(this.noise.data, 0, 0);
-  }
 
-  draw(ctx) {
-    const c = this.cur;
-    if (!c || !c.ready) return;
-    const full = c.mode === 'full';
-    const dur = B.flashback.durSec;
-    const t = clamp01(c.elapsed / dur);
-    const env = flashEnvelope(t);
-    if (env <= 0.001) return;
-
-    const color = flashbackColorFor(c.attr);
-    const zoomMax = full ? B.flashback.maxZoom : B.flashback.reducedMaxZoom;
-    const zoom = 1 + (zoomMax - 1) * easeOut(c.elapsed / (dur * 0.55));
-    const pivot = { x: W / 2, y: H * 0.46 };
-
-    ctx.save();
-    ctx.globalCompositeOperation = 'source-over';
-
-    // 1. 背景を暗くする
-    ctx.fillStyle = `rgba(12,0,24,${((full ? 0.6 : 0.35) * env).toFixed(3)})`;
-    ctx.fillRect(0, 0, W, H);
-
-    // 2. チャームポイントの拡大（一枚絵、無ければハート）
-    ctx.globalAlpha = (full ? 0.95 : 0.7) * env;
-    const hasFilter = 'filter' in ctx;
-    if (full && hasFilter) {
-      const blur = 10 * (1 - clamp01(c.elapsed / 0.5)) + 1.5;
-      ctx.filter = `blur(${blur.toFixed(1)}px)`;
-    }
-    if (c.portrait) {
-      const { img, cx, cy } = c.portrait;
-      const tr = charmTransform({ imgW: img.width, imgH: img.height, cx, cy, zoom, pivot });
-      ctx.drawImage(img, tr.x, tr.y, tr.w, tr.h);
-      if (full) {
-        // 色ずれのゴースト
-        const off = 8 * env;
-        ctx.globalAlpha = 0.3 * env;
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.drawImage(img, tr.x + off, tr.y, tr.w, tr.h);
-        ctx.drawImage(img, tr.x - off, tr.y, tr.w, tr.h);
-        ctx.globalCompositeOperation = 'source-over';
-      }
-    } else {
-      const s = 140 * zoom;
-      const grad = ctx.createRadialGradient(pivot.x, pivot.y, 0, pivot.x, pivot.y, s * 1.4);
-      grad.addColorStop(0, rgba(color, 0.9));
-      grad.addColorStop(1, rgba(color, 0));
-      ctx.fillStyle = grad;
-      ctx.fillRect(pivot.x - s * 1.4, pivot.y - s * 1.4, s * 2.8, s * 2.8);
-      ctx.fillStyle = rgba(color, 0.85);
-      heartPath(ctx, pivot.x, pivot.y, s);
-      ctx.fill();
-    }
-    if (hasFilter) ctx.filter = 'none';
-    ctx.globalAlpha = 1;
-
-    // 3. 桃色の色味とビネット
-    ctx.fillStyle = rgba(color, (full ? 0.2 : 0.1) * env);
-    ctx.fillRect(0, 0, W, H);
-    const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, Math.hypot(W, H) / 2);
-    vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, `rgba(20,0,30,${(0.55 * env).toFixed(3)})`);
-    ctx.fillStyle = vg;
-    ctx.fillRect(0, 0, W, H);
-
-    // 4. 拡大の中心を示すリング
-    const ringR = 60 + 160 * easeOut(c.elapsed / 0.8);
-    ctx.strokeStyle = rgba(color, 0.55 * env);
-    ctx.lineWidth = 2 + 4 * (1 - t);
-    ctx.beginPath();
-    ctx.arc(pivot.x, pivot.y, ringR, 0, Math.PI * 2);
-    ctx.stroke();
-
-    if (full) {
-      // 5. ノイズ
-      if (this.noise) {
-        ctx.imageSmoothingEnabled = false;
-        ctx.globalAlpha = 0.14 * env;
-        ctx.globalCompositeOperation = 'overlay';
-        ctx.drawImage(this.noise.canvas, 0, 0, W, H);
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = 'source-over';
-      }
-      // 6. 色反転フラッシュ
-      const inv = invertPulse(c.elapsed);
-      if (inv > 0.01) {
-        ctx.globalCompositeOperation = 'difference';
-        ctx.fillStyle = `rgba(255,255,255,${(0.8 * inv).toFixed(3)})`;
-        ctx.fillRect(0, 0, W, H);
+    // 残像（遅れて追う）→ 本体の順に重ねる
+    if (a.art && ap.alpha > 0) {
+      for (let i = ap.echoCount; i >= 0; i -= 1) {
+        const alpha = (i === 0 ? ap.alpha : ap.echoAlpha / i) * level;
+        if (alpha <= 0.003) continue;
+        const m = motionFor(a.attr, Math.max(0, a.age - i * art.echoLagSec), a.total, art, ap.still);
+        const size = art.sizePx * m.scale * (1 + 0.07 * i);
+        g.globalAlpha = Math.min(1, alpha);
+        g.drawImage(a.art, cx + m.dx - size / 2, cy + m.dy - size / 2, size, size);
       }
     }
-    ctx.restore();
+
+    g.restore();
+  }
+
+  // ドキッとするハート（大きなハートの鼓動・波紋・飛び出す小さなハート）。絵の上に重ねる
+  drawOverlay(g) {
+    const a = this.active;
+    if (!a || !a.hearts) return;
+    const h = a.p.hearts;
+    const { times, small } = a.hearts;
+    const level = this.level(a);
+    const { logicalWidth: lw, logicalHeight: lh } = this.render;
+    const cx = lw / 2;
+    const cy = lh / 2;
+    const base = a.tint;
+    const light = lighten(base, 0.45);
+    const lightRgb = `${light[0]}, ${light[1]}, ${light[2]}`;
+    const baseRgb = `${base[0]}, ${base[1]}, ${base[2]}`;
+
+    g.save();
+
+    // 波紋: 拍ごとに、ハート形の輪が外へ広がって消える
+    g.lineJoin = 'round';
+    for (const t of times) {
+      const life = Math.min(h.ringLifeSec, Math.max(0.1, a.total - t - 0.05));
+      const u = ringProgress(a.age, t, life);
+      if (u == null) continue;
+      const ease = 1 - (1 - u) * (1 - u);
+      const half = (h.sizePx * 0.45) + (h.ringMaxPx * 0.5 - h.sizePx * 0.45) * ease;
+      const alpha = h.ringAlpha * (1 - u) * (1 - u) * a.scale;
+      if (alpha <= 0.003) continue;
+      g.strokeStyle = `rgba(${lightRgb}, ${alpha.toFixed(4)})`;
+      g.lineWidth = Math.max(1, h.lineWidthPx * 0.6 * (1 - u));
+      heartPath(g, cx, cy, half);
+      g.stroke();
+    }
+
+    // 大きなハート: 淡い塗りと縁取り。拍の瞬間に大きさだけ膨らむ
+    if (level > 0.003) {
+      const s = (h.sizePx / 2) * beatScale(a.age, times, h);
+      heartPath(g, cx, cy, s);
+      g.fillStyle = `rgba(${baseRgb}, ${(h.fillAlpha * level).toFixed(4)})`;
+      g.fill();
+      g.strokeStyle = `rgba(${lightRgb}, ${(h.lineAlpha * level).toFixed(4)})`;
+      g.lineWidth = h.lineWidthPx;
+      g.stroke();
+    }
+
+    // 小さなハート: 拍のタイミングで中央から飛び出し、漂いながら消える
+    g.fillStyle = `rgb(${lightRgb})`;
+    for (const q of small) {
+      const u = (a.age - q.t0) / q.life;
+      const alpha = h.smallAlpha * smallHeartAlpha(u);
+      if (alpha <= 0.003) continue;
+      const ease = 1 - (1 - u) * (1 - u);
+      const x = cx + Math.cos(q.angle) * q.reach * ease + Math.sin(q.sway + a.age * 3) * 8 * u;
+      const y = cy + Math.sin(q.angle) * q.reach * 0.8 * ease - 36 * u;
+      g.globalAlpha = Math.min(1, alpha);
+      heartPath(g, x, y, (q.size / 2) * (0.6 + 0.5 * ease));
+      g.fill();
+    }
+
+    g.restore();
   }
 }

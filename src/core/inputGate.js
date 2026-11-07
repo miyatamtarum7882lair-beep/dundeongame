@@ -1,17 +1,25 @@
-// File: src/core/inputGate.js
-/** 勃起状態の「行動が遅くなる」を、行動確定後の入力ロックで表現する。 */
+/** Locks input after a confirmed action while the erection state is active. */
 export class InputGate {
-  constructor({ now = () => performance.now() / 1000 } = {}) {
-    this.now = now;
-    this.readyAt = 0;
+  constructor({ lockSec, isActive }) {
+    this.lockSec = lockSec;
+    this.isActive = isActive;
+    this.left = 0;
   }
 
-  ready() {
-    return this.now() >= this.readyAt;
+  canAct() {
+    return this.left <= 0;
   }
 
-  /** 行動が確定するたびに呼ぶ。delaySec が 0 なら何もしない。 */
-  consume(delaySec) {
-    if (delaySec > 0) this.readyAt = this.now() + delaySec;
+  onAction(busySec = 0) {
+    if (!this.isActive()) return;
+    this.left = Math.max(this.left, Math.max(0, busySec) + this.lockSec);
+  }
+
+  update(dtSec) {
+    if (this.left > 0) this.left = Math.max(0, this.left - Math.max(0, dtSec));
+  }
+
+  clear() {
+    this.left = 0;
   }
 }

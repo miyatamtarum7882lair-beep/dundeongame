@@ -85,31 +85,35 @@ import { buildStatusEntries } from '../src/ui/statusPanel.js';
 
 // ---- InputGate ----
 {
-  let clock = 0;
-  const g = new InputGate({ now: () => clock });
-  assert.equal(g.ready(), true);
-  g.consume(0);
-  assert.equal(g.ready(), true);
-  g.consume(0.35);
-  assert.equal(g.ready(), false);
-  clock = 0.34;
-  assert.equal(g.ready(), false);
-  clock = 0.36;
-  assert.equal(g.ready(), true);
+  let active = false;
+  const gate = new InputGate({ lockSec: 0.35, isActive: () => active });
+  gate.onAction(0.2);
+  assert.equal(gate.canAct(), true);
+  active = true;
+  gate.onAction(0.2);
+  assert.equal(gate.canAct(), false);
+  gate.update(0.54);
+  assert.equal(gate.canAct(), false);
+  gate.update(0.02);
+  assert.equal(gate.canAct(), true);
+  gate.clear();
+  assert.equal(gate.canAct(), true);
 }
 
-// ---- ステータス表示 ----
+// ---- status panel ----
 {
   assert.deepEqual(buildStatusEntries({}), []);
-  const e = buildStatusEntries({
-    buffs: [{ id: 'atkUp', label: '攻撃強化', desc: 'ダメージ+30%', turnsLeft: 12 }],
+  const entries = buildStatusEntries({
+    buffs: [{ id: 'atkUp', label: 'Attack Up', turnsLeft: 12 }],
+    buffTurns: 20,
     afterglowTurns: 7,
-    erectLeftSec: 2.34,
+    erectTurns: 2,
+    erectTotalTurns: 3
   });
-  assert.deepEqual(e.map((x) => x.id), ['afterglow', 'erect', 'atkUp']);
-  assert.equal(e[0].remain, '残り7T');
-  assert.equal(e[1].remain, '2.3s');
-  assert.equal(e[2].remain, '残り12T');
+  assert.deepEqual(entries.map((entry) => entry.id), ['erect', 'afterglow', 'atkUp']);
+  assert.equal(entries[0].detail, '2ターン');
+  assert.equal(entries[1].detail, '7ターン');
+  assert.equal(entries[2].icon, 'sword');
+  assert.equal(entries[2].detail, '12');
 }
-
 console.log('battle-logic: all checks passed');

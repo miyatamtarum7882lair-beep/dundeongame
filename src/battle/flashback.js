@@ -1,35 +1,68 @@
-// File: src/battle/flashback.js
-import { B } from '../data/balance.js';
+import { durationFor } from '../core/flashbackMath.js';
 
-/**
- * kind: 'touch'（拳の接触ペナルティ）| 'strong'（強力な技）| 'rematch'（敗北技の再遭遇）| 'bind'（拘束開始）
- * - 余韻中・絶頂中は発生しない。
- * - 勃起状態（行動が遅くなる）は 'bind' 以外で付与する。
- * - 'strong' / 'rematch' は同じ技・同じ敵で1フロアに1回まで。
- * - 表示の full / reduced / off は mode としてイベントに載せる。off でも勃起状態は付与する。
- */
+/** Contact penalties are once per enemy; skill flashbacks are once per skill per floor. */
+export function flashbackKey(kind, enemyId, skillId) {
+  if (kind === 'touch') return `touch:${enemyId}`;
+  return `skill:${skillId ?? enemyId}`;
+}
+
 export class FlashbackController {
-  /**
-   * @param {object} deps
-   * @param {() => ('full'|'reduced'|'off')} deps.getMode
-   * @param {(name: string, payload?: object) => void} deps.emit
-   * @param {() => boolean} [deps.isBlocked] 余韻中・絶頂中など
-   */
-  constructor({ getMode, emit, isBlocked = () => false }) {
+  constructor({ cfg, getMode, getFloorKey, emit, isBlocked = () => false }) {
+    this.cfg = cfg;
     this.getMode = getMode;
+    this.getFloorKey = getFloorKey;
     this.emit = emit;
     this.isBlocked = isBlocked;
-    this.time = 0;
-    this.activeUntil = -Infinity;
-    this.lastFiredAt = -Infinity;
+    this.used = new Set();
+    this.floorKey = null;
+    this.sinceLast = Infinity;
     this.erectTurns = 0;
-    this.once = new Set();
-    this.wasActive = false;
-    this.wasErect = false;
+    this.maxErectTurns = 0;
   }
 
-  isActive() {
-    return this.time < this.activeUntil;
+  request({ kind, enemyId, speciesId = enemyId, attr, skillId = null, tx, ty }) {
+    if (this.isBlocked()) return false;
+    this.syncFloor();
+    const key = flashbackKey(kind, enemyId, skillId);
+    if (this.used.has(key) || this.sinceLast < this.cfg.minGapSec) return false;
+
+    this.used.add(key);
+    this.sinceLast = 0;
+    const mode = this.getMode() ?? 'full';
+    const erectTurns = kind === 'bind' ? 0 : this.cfg.erectTurns;
+    if (erectTurns > 0) {
+      this.erectTurns = Math.max(this.erectTurns, erectTurns);
+      this.maxErectTurns = erectTurns;
+    }
+    this.emit('flashbackStart', {
+      kind,
+      enemyId,
+      speciesId,
+      attr,
+      skillId,
+      tx,
+      ty,
+      mode,
+      durationSec: durationFor(kind, mode, this.cfg),
+      erectTurns
+    });
+    return true;
+  }
+
+  syncFloor() {
+    const key = this.getFloorKey();
+    if (key === this.floorKey) return;
+    this.floorKey = key;
+    this.used.clear();
+  }
+
+  update(dtSec) {
+    const dt = Math.max(0, dtSec);
+    if (this.sinceLast < Infinity) this.sinceLast += dt;
+  }
+
+  onHeroTurn() {
+    if (this.erectTurns > 0) this.erectTurns -= 1;
   }
 
   isErect() {
@@ -40,67 +73,21 @@ export class FlashbackController {
     return this.erectTurns;
   }
 
-  /** 1回の主人公行動ごとに残りターンを減らす。 */
-  onHeroTurn() {
-    if (this.erectTurns <= 0) return;
-    this.erectTurns -= 1;
-    if (this.erectTurns === 0) {
-      this.wasErect = false;
-      this.emit('statusChanged', {});
-    } else {
-      this.emit('statusChanged', {});
-    }
+  erectTotalTurns() {
+    return this.maxErectTurns;
   }
 
-  /** @param {{kind: string, enemyId: string, attr?: string, skillId?: string|null, tx?: number, ty?: number}} req */
-  request(req) {
-    const c = B.flashback;
-    if (this.isBlocked()) return { fired: false, reason: 'blocked' };
-    if (this.isActive()) return { fired: false, reason: 'active' };
-    if (this.time - this.lastFiredAt < c.minIntervalSec) {
-      return { fired: false, reason: 'cooldown' };
-    }
-    if (req.kind === 'strong' || req.kind === 'rematch') {
-      const key = `${req.kind}:${req.enemyId}:${req.skillId ?? ''}`;
-      if (this.once.has(key)) return { fired: false, reason: 'once' };
-      this.once.add(key);
-    }
-
-    const mode = this.getMode();
-    const erect = req.kind !== 'bind';
-    this.lastFiredAt = this.time;
-    this.activeUntil = this.time + c.durSec;
-    this.wasActive = true;
-    if (erect) {
-      this.erectTurns = c.erectTurns;
-      this.wasErect = true;
-    }
-    this.emit('flashbackStart', { ...req, mode, durSec: c.durSec, erect });
-    if (erect) this.emit('statusChanged', {});
-    return { fired: true, erect, mode };
-  }
-
-  update(dt) {
-    this.time += dt;
-    if (this.wasActive && !this.isActive()) {
-      this.wasActive = false;
-      this.emit('flashbackEnd', {});
-    }
-  }
-
-  /** 絶頂開始などで映像を打ち切る。勃起状態は残す。 */
+  /** Stop the current visual and erection without clearing this floor's usage. */
   cancel() {
-    if (this.wasActive) {
-      this.activeUntil = -Infinity;
-      this.wasActive = false;
-      this.emit('flashbackEnd', {});
-    }
+    this.erectTurns = 0;
+    this.emit('flashbackCancel', {});
   }
 
-  resetFloor() {
-    this.once.clear();
+  /** Reset after defeat/run reset. */
+  reset() {
+    this.used.clear();
+    this.floorKey = null;
+    this.sinceLast = Infinity;
     this.cancel();
-    this.erectTurns = 0;
-    this.wasErect = false;
   }
 }
