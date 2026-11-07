@@ -6,6 +6,7 @@ import { resetRun } from '../core/storage.js';
 import { onDungeonClear, recordEncounter } from '../battle/learning.js';
 import { enemyLevel, enemyMaxHp } from '../battle/enemyStats.js';
 import { Combat } from '../battle/combat.js';
+import { EnemyPhase } from '../battle/enemyPhase.js';
 import { ENEMIES_BY_ID, ATTRS } from '../data/enemies.js';
 import { generateFloor, TILE } from './generate.js';
 import { FloorMap } from './floorMap.js';
@@ -39,6 +40,7 @@ export class Exploration extends Emitter {
     this.holdSec = 0;
     this.bannerSec = 0;
     this.onStairs = false;
+    this.enemyPhase = null;
   }
 
   // イベントの受け取り側をつないだあとに呼ぶ
@@ -52,8 +54,9 @@ export class Exploration extends Emitter {
     const run = save.currentRun;
     if (!run.seed) run.seed = (Math.random() * 0xffffffff) >>> 0;
     run.floor = floor;
+    this.enemyPhase = null;
 
-    const gen = generateFloor(run.seed, floor, B);
+    const gen = generateFloor(run.seed, floor, B, run.debugOptions?.enemySpawnWeights);
     this.map = new FloorMap(gen);
     this.walk = (x, y) => this.map.isWalkable(x, y);
     this.units = [];
@@ -63,7 +66,10 @@ export class Exploration extends Emitter {
       { kind: 'hero', speciesId: 'hero', name: '主人公', spriteId: 'hero', color: '#4da3ff' },
       gen.start.x, gen.start.y
     );
-    for (const allyId of B.dungeon.allies) {
+    const party = B.dungeon.allies.filter((allyId) =>
+      allyId !== 'priest' || run.debugOptions?.priestCompanion !== false
+    );
+    for (const allyId of party) {
       const info = ALLY_INFO[allyId];
       const spot = this.freeNear(gen.start.x, gen.start.y);
       this.spawn(
@@ -302,14 +308,16 @@ export class Exploration extends Emitter {
   }
 
   boundTick() {
-    if (!this.combat.bound) return;
+    if (!this.combat.bound || this.enemyPhase) return;
     for (const u of this.units) u.beginTurn();
     this.combat.beginTurn();
     this.alliesAct(null);
-    this.enemiesAct(true);
-    this.combat.endTurn();
-    this.combat.boundTurnElapsed();
-    this.emit('turn', this.turnCount);
+    this.enemiesAct(true, () => {
+      this.combat.endTurn();
+      this.combat.boundTurnElapsed();
+      if (this.combat.defeated) this.handleDefeat();
+      this.emit('turn', this.turnCount);
+    });
   }
 
   beginTurn() {
@@ -319,17 +327,21 @@ export class Exploration extends Emitter {
 
   // 主人公の行動のあと、仲間 → 敵の順に動く
   endHeroAction(swappedAlly) {
+    if (this.enemyPhase) return;
     this.turnCount += 1;
     this.refresh();
-    this.alliesAct(swappedAlly);
-    this.enemiesAct();
-    this.combat.endTurn();
-
     this.busyTotal = this.combat.actedThisTurn ? this.B.explore.combatSec : this.B.explore.moveSec;
     this.busySec = this.busyTotal;
+    this.alliesAct(swappedAlly);
+    this.enemiesAct(false, () => this.finishHeroTurn());
+  }
+
+  finishHeroTurn() {
+    this.combat.endTurn();
     this.emit('turn', this.turnCount);
 
     if (this.combat.defeated) this.handleDefeat();
+    this.emit('heroTurnDone');
   }
 
   // 歩数地図を使って、主人公へ1歩近づく。動けたら true
@@ -417,59 +429,78 @@ export class Exploration extends Emitter {
     return Math.max(dx, dy);
   }
 
-  enemiesAct(boundPhase = false) {
-    const D = this.B.dungeon;
-    const w = this.map.w;
-    for (const e of [...this.units]) {
-      if (e.kind !== 'enemy') continue;
-      if (this.combat.bound && !boundPhase) break;
-      if (this.combat.bound?.binders.some((b) => b.unit === e)) continue;
-      if (this.combat.defeated) break;   // 主人公が倒れたら、残りの敵は動かない
-
-      const dist = this.enemyDist(e);
-      const seen = this.map.isVisible(e.tx, e.ty);
-      const pathDist = this.heroDist[e.ty * w + e.tx];
-      const aware = seen && pathDist >= 0 && pathDist <= D.aggroRange;
-
-      if (boundPhase && this.combat.bound) {
-        const diagonal = Math.abs(e.tx - this.hero.tx) === 1 && Math.abs(e.ty - this.hero.ty) === 1;
-        if (diagonal && this.stepTowardBindPosition(e)) {
-          this.combat.tryUnite(e);
-        } else if (dist <= 1) {
-          this.combat.tryUnite(e);
-        } else if (aware) {
-          if (chebyshev(e.tx, e.ty, this.hero.tx, this.hero.ty) === 1) this.stepTowardBindPosition(e);
-          else this.stepToward(e);
-        } else if (Math.random() < D.wanderChance) {
-          const d = DIRS8[Math.floor(Math.random() * DIRS8.length)];
-          const nx = e.tx + d.dx;
-          const ny = e.ty + d.dy;
-          if (canStep(this.walk, e.tx, e.ty, d.dx, d.dy) && !this.unitAt(nx, ny)) e.moveTo(nx, ny);
-        }
-        continue;
+  enemiesAct(boundPhase = false, onDone = null) {
+    const list = this.units.filter((u) => u.kind === 'enemy');
+    this.enemyPhase = new EnemyPhase({
+      units: list,
+      isPresent: (enemy) => this.units.includes(enemy),
+      act: (enemy) => this.actEnemy(enemy, boundPhase),
+      shouldStop: () => Boolean(this.combat.defeated) || (!boundPhase && Boolean(this.combat.bound)),
+      isBusy: () => this.combat.director.busy(),
+      onDone: () => {
+        this.enemyPhase = null;
+        onDone?.();
       }
-
-      if (aware || dist <= 1) {
-        const diagonal = Math.abs(e.tx - this.hero.tx) === 1 && Math.abs(e.ty - this.hero.ty) === 1;
-        if (diagonal && this.stepTowardBindPosition(e)) {
-          // Reposition and resolve the chosen attack as one enemy action.
-          this.combat.enemyDecide(e, { dist: 1, sees: seen, bindImmediately: true });
-          continue;
-        }
-        if (this.combat.enemyDecide(e, { dist, sees: seen, bindImmediately: diagonal }) === 'move') {
-          this.stepToward(e);
-        }
-        continue;
-      }
-      if (Math.random() < D.wanderChance) {
-        const d = DIRS8[Math.floor(Math.random() * DIRS8.length)];
-        const nx = e.tx + d.dx;
-        const ny = e.ty + d.dy;
-        if (canStep(this.walk, e.tx, e.ty, d.dx, d.dy) && !this.unitAt(nx, ny)) e.moveTo(nx, ny);
-      }
-    }
+    });
+    this.enemyPhase.pump();
   }
 
+  phaseBusy() {
+    return Boolean(this.enemyPhase);
+  }
+
+  updatePhase() {
+    this.enemyPhase?.pump();
+  }
+
+  wanderStep(e) {
+    const d = DIRS8[Math.floor(Math.random() * DIRS8.length)];
+    const nx = e.tx + d.dx;
+    const ny = e.ty + d.dy;
+    if (canStep(this.walk, e.tx, e.ty, d.dx, d.dy) && !this.unitAt(nx, ny)) e.moveTo(nx, ny);
+  }
+
+  actEnemy(e, boundPhase) {
+    const D = this.B.dungeon;
+    const w = this.map.w;
+    if (this.combat.bound?.binders.some((b) => b.unit === e) || this.combat.defeated) return;
+    const dist = this.enemyDist(e);
+    const seen = this.map.isVisible(e.tx, e.ty);
+    const pathDist = this.heroDist[e.ty * w + e.tx];
+    const aware = seen && pathDist >= 0 && pathDist <= D.aggroRange;
+
+    if (boundPhase && this.combat.bound) {
+      const diagonal = Math.abs(e.tx - this.hero.tx) === 1 && Math.abs(e.ty - this.hero.ty) === 1;
+      if (diagonal && this.stepTowardBindPosition(e)) {
+        // 拘束位置へ移動して同じ行動内で演出に入るため、移動前座標への補間を止める。
+        e.fromX = e.tx;
+        e.fromY = e.ty;
+        this.combat.tryUnite(e);
+      }
+      else if (dist <= 1) this.combat.tryUnite(e);
+      else if (aware) {
+        if (chebyshev(e.tx, e.ty, this.hero.tx, this.hero.ty) === 1) this.stepTowardBindPosition(e);
+        else this.stepToward(e);
+      } else if (Math.random() < D.wanderChance) this.wanderStep(e);
+      return;
+    }
+
+    if (aware || dist <= 1) {
+      const diagonal = Math.abs(e.tx - this.hero.tx) === 1 && Math.abs(e.ty - this.hero.ty) === 1;
+      if (diagonal && this.stepTowardBindPosition(e)) {
+        // 同じ行動で技を始めるので、技の演出中は到着位置に固定する。
+        e.fromX = e.tx;
+        e.fromY = e.ty;
+        this.combat.enemyDecide(e, { dist: 1, sees: seen, bindImmediately: true });
+        return;
+      }
+      if (this.combat.enemyDecide(e, { dist, sees: seen, bindImmediately: diagonal }) === 'move') {
+        this.stepToward(e);
+      }
+      return;
+    }
+    if (Math.random() < D.wanderChance) this.wanderStep(e);
+  }
   // ---- 敗北 ----
   // ステップ2では、学習を記録して、新しいランを1階から始める（リザルトは後のステップ）
   handleDefeat() {

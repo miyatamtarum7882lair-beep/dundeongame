@@ -87,6 +87,10 @@ export const LOG_KINDS = {
     mark: '◇', color: 'cyan', importance: 'minor', se: null,
     text: '{name}の{skill}！ MP -{amount}'
   },
+  heroExpDrained: {
+    mark: '◇', color: 'cyan', importance: 'minor', se: null,
+    text: '{name}の{skill}！ EXP -{amount}'
+  },
   enemyDown: {
     mark: '◇', color: 'white', importance: 'minor', se: null,
     text: '{name}を倒した！ EXP +{exp}'

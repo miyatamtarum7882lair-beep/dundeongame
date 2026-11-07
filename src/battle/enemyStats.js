@@ -7,9 +7,16 @@ export function enemyLevel(raceId, floor, persistent, B) {
   const def = ENEMIES_BY_ID[raceId];
   const E = B.enemy;
   const base = 1 + (floor - 1) * E.levelPerFloor + (E.rankBonus[def.rank] ?? 0);
-  return base + Math.floor(totalAbilityLevel(persistent, raceId) / E.abilityPerLevel);
+  const raceBonus = persistent.enemyLevels?.[raceId] ?? 0;
+  return base + Math.floor(totalAbilityLevel(persistent, raceId) / E.abilityPerLevel) + raceBonus;
 }
 
 export function enemyMaxHp(level, B) {
   return Math.round(B.enemy.baseHp + B.enemy.hpPerLevel * (level - 1));
+}
+
+/** EXP needed for the next absorbed-experience level. */
+export function enemyExpNeeded(level, B) {
+  const E = B.enemy;
+  return Math.max(1, E.expBase + E.expPerLevel * Math.max(0, level - 1));
 }

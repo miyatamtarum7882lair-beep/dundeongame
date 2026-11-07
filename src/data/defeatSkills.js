@@ -16,5 +16,6 @@ export const DEFEAT_SKILLS = {
   foxPounce: { name: 'きつねの飛びかかり', kind: 'special', attr: 'hip' },
   sexyPose: { name: 'セクシーポーズ', kind: 'tactic' },
   beggingTrap: { name: '命乞い', kind: 'tactic' },
-  charmAlly: { name: '味方への魅了', kind: 'tactic' }
+  charmAlly: { name: '味方への魅了', kind: 'tactic' },
+  drainBerochu: { name: 'どれいんべろちゅー♡', kind: 'special', attr: 'mouth' }
 };

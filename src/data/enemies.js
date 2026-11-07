@@ -10,7 +10,7 @@ export const ATTRS = {
 
 export const ENEMIES = [
   { id: 'kitten', name: '小悪魔ちゃん', attr: 'mouth', rank: 'basic', normalSkill: 'kissAttack',
-    bindSkills: ['levelDrainKiss'], skills: ['blowKiss', 'pinkBreath', 'sexyPose'] },
+    bindSkills: ['levelDrainKiss'], skills: ['blowKiss', 'pinkBreath', 'sexyPose', 'drainBerochu'] },
   { id: 'blackRibbon', name: '黒髪リボンちゃん', attr: 'mouth', rank: 'basic', normalSkill: 'kissAttack',
     bindSkills: ['levelDrainKiss'], skills: ['blowKiss'], advancedSkill: 'deepDrainKiss' },
   { id: 'pinkFox', name: 'ピンク髪きつねちゃん', attr: 'hip', rank: 'basic',

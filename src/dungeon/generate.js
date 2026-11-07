@@ -17,7 +17,7 @@ const centerOf = (room) => ({
   y: room.y + Math.floor(room.h / 2)
 });
 
-export function generateFloor(seed, floor, B) {
+export function generateFloor(seed, floor, B, enemySpawnWeights = {}) {
   const D = B.dungeon;
   const w = D.width;
   const h = D.height;
@@ -100,10 +100,25 @@ export function generateFloor(seed, floor, B) {
   );
   const count = Math.min(ri(D.enemiesPerFloor.min, D.enemiesPerFloor.max), spawnPool.length);
   const enemySpawns = [];
-  for (let i = 0; i < count; i++) {
+  const configuredSpecies = D.enemySpecies.map((species) => ({
+    species,
+    weight: Math.max(0, Number(enemySpawnWeights[species] ?? 1) || 0)
+  }));
+  const configuredTotal = configuredSpecies.reduce((sum, entry) => sum + entry.weight, 0);
+  const weightedSpecies = configuredSpecies.filter((entry) => entry.weight > 0);
+  const totalWeight = weightedSpecies.reduce((sum, entry) => sum + entry.weight, 0);
+  const pickSpecies = () => {
+    let roll = rnd() * totalWeight;
+    for (const entry of weightedSpecies) {
+      roll -= entry.weight;
+      if (roll < 0) return entry.species;
+    }
+    return weightedSpecies.at(-1)?.species;
+  };
+  for (let i = 0; i < (configuredTotal > 0 ? count : 0); i++) {
     const k = ri(0, spawnPool.length - 1);
     const c = spawnPool.splice(k, 1)[0];
-    enemySpawns.push({ x: c.x, y: c.y, species: D.enemySpecies[ri(0, D.enemySpecies.length - 1)] });
+    enemySpawns.push({ x: c.x, y: c.y, species: pickSpecies() });
   }
 
   return { w, h, tiles, rooms, start, stairs: { x: stairs.x, y: stairs.y }, enemySpawns };

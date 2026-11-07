@@ -15,6 +15,7 @@ export const SE_TABLE = {
   slash: { synth: 'slash', gain: 0.8, spatial: true },
   thud: { synth: 'thud', gain: 0.9, spatial: true },
   warning: { synth: 'warning', gain: 0.65, spatial: true },
+  skillFlash: { synth: 'skillFlash', gain: 0.6, spatial: true },
   bind: { synth: 'bind', gain: 0.8, spatial: true },
   unite: { synth: 'unite', gain: 0.8, spatial: true },
   vacuumKiss: { synth: 'vacuumKiss', gain: 0.9, spatial: true },

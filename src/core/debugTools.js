@@ -34,7 +34,8 @@ export const DEBUG_ACTIONS = [
     input: { label: 'Lv', def: () => 1, min: -98, max: 98 },
     run(save, B, { value }) {
       const hero = save.currentRun.hero;
-      hero.level = clamp(hero.level + value, 1, B.debug.heroLevelMax);
+      const level = Number.isFinite(hero.level) ? hero.level : 20;
+      hero.level = clamp(level + value, 1, B.debug.heroLevelMax);
       hero.exp = 0;
       return `主人公のレベル ${sign(value)} → Lv${hero.level}`;
     }

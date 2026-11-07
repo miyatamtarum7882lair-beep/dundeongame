@@ -17,6 +17,7 @@ import { clamp } from './core/util.js';
 import { spatialFromOffset } from './core/spatialPan.js';
 import { FloatLog } from './ui/floatLog.js';
 import { DebugHud } from './ui/debugHud.js';
+import { openTitleDebugPanel } from './ui/titleDebugPanel.js';
 import { Exploration } from './dungeon/exploration.js';
 import { DungeonView } from './ui/dungeonView.js';
 import { drawMinimap } from './ui/minimap.js';
@@ -37,6 +38,7 @@ import { drawEnemyLabels } from './ui/enemyLabels.js';
 import { drawPartyPanel } from './ui/partyPanel.js';
 import { drawDebuffPanel } from './ui/debuffPanel.js';
 import { buildStatusEntries, drawStatusPanel } from './ui/statusPanel.js';
+import { SkillHud } from './ui/skillHud.js';
 import {
   recordDefeat, getMarkScore, markTier, MARK_TIER_NAMES, recordEncounter
 } from './battle/learning.js';
@@ -105,6 +107,21 @@ const flashbackFx = new FlashbackFx({
 const inputGate = new InputGate({
   lockSec: B.flashbackFx.inputLockSec,
   isActive: () => combat.flashback.isErect()
+});
+const skillHud = new SkillHud({
+  cfg: B.stage,
+  render: B.render,
+  fontFamily: B.ui.fontFamily,
+  getSettings: () => save.settings,
+  toScreen: (x, y) => battleFx.toScreen(x, y)
+});
+combat.on('skillName', (info) => skillHud.show(info));
+combat.on('skillFlash', (info) => skillHud.flash(info));
+exploration.on('heroTurnDone', () => {
+  if (!combat.bound && timeMode.mode === 'TURN') {
+    inputGate.onAction(Math.max(0, exploration.busySec ?? 0));
+    if (combat.flashback.erectTurnsLeft() > 0) combat.flashback.onHeroTurn();
+  }
 });
 timeMode.tickSecProvider = () => combat.climax.boundTickSec();
 let boundPortraitLoading = false;
@@ -356,10 +373,25 @@ function showTitleScreen() {
     heading,
     subtitle,
     makeButton('冒険を始める', () => {
+      exploration.startFloor(save.currentRun.floor || 1);
+      scheduleSave(save);
       titleActive = false;
       root.remove();
       clock.resume('title');
     }, true),
+    makeButton('デバッグ設定', () => {
+      if (root.querySelector('[data-title-debug]')) return;
+      const editor = openTitleDebugPanel({
+        save,
+        B,
+        onClose: () => {
+          scheduleSave(save);
+          editor.remove();
+        }
+      });
+      editor.dataset.titleDebug = 'true';
+      root.append(editor);
+    }),
     makeButton('チャームポイント設定', () => openCharmEditor())
   );
   root.append(panel);
@@ -389,7 +421,7 @@ function handleInput() {
     }
     if (clock.paused) continue;
     if (timeMode.mode === 'BOUND') {
-      if (ev.action === 'struggle') combat.struggle();
+      if (!exploration.phaseBusy() && ev.action === 'struggle') combat.struggle();
       continue;
     }
     if (ev.action === 'map') {
@@ -399,7 +431,7 @@ function handleInput() {
     }
     exploreActions.push(ev);
   }
-  exploration.handleEvents(exploreActions, canExplore() && inputGate.canAct());
+  exploration.handleEvents(exploreActions, canExplore() && inputGate.canAct() && !exploration.phaseBusy());
 
   for (const code of input.drainRaw()) {
     if (code === 'F3') debugHud.toggle();
@@ -572,6 +604,7 @@ function render() {
   drainFx.drawEdge(gHires);
   drawEnemyLabels(gHires, dungeonView, save.persistent, B);
   battleFx.drawWorld(gHires);
+  skillHud.drawFlash(gHires);
   heartFx.draw(gHires);
   kissMarks.draw(gHires);
   if (save.settings.showMinimap) drawMinimap(gHires, exploration, B);
@@ -590,6 +623,7 @@ function render() {
     { width: B.render.logicalWidth, height: B.render.logicalHeight, fontFamily: B.ui.fontFamily }
   );
   drawPartyPanel(gHires, exploration, B);
+  skillHud.drawBanner(gHires);
   flashbackFx.drawOverlay(gHires);
   const minimapBottom = 16 + exploration.map.h * B.explore.minimapScale + 24;
   drawDebuffPanel(gHires, save.persistent, B, {
@@ -614,13 +648,10 @@ function loop(nowMs) {
   combat.climax.update(dt);
   combat.flashback.update(dt);
   eventState.update(clock.time);
-  const turnBefore = exploration.turnCount;
-  const erectBeforeTurn = combat.flashback.erectTurnsLeft();
-  exploration.update(dt, input, canExplore() && inputGate.canAct());
-  if (!combat.bound && timeMode.mode === 'TURN' && exploration.turnCount !== turnBefore) {
-    inputGate.onAction(Math.max(0, exploration.busySec ?? 0));
-    if (erectBeforeTurn > 0) combat.flashback.onHeroTurn();
-  }
+  combat.director.update(dt);
+  skillHud.update(dt);
+  exploration.updatePhase();
+  exploration.update(dt, input, canExplore() && inputGate.canAct() && !exploration.phaseBusy());
   dungeonView.update(dt, exploration);
   battleFx.update(dt);
   flashbackFx.update(dt);

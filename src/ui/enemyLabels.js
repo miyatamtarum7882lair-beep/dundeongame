@@ -2,6 +2,7 @@
 // 敵の頭上の表示（高解像度層）。名前、レベル、HPバー、カモ度の段階（◇ 見慣れ／◆ 見切り）。
 import { ENEMIES_BY_ID, ATTRS } from '../data/enemies.js';
 import { markTier, getMarkScore } from '../battle/learning.js';
+import { enemyExpNeeded } from '../battle/enemyStats.js';
 import { clamp01 } from '../core/util.js';
 
 const TIER_STYLE = {
@@ -33,13 +34,17 @@ export function drawEnemyLabels(g, view, persistent, B) {
     g.fillRect(bx - 1, by - 1, bw + 2, 7);
     g.fillStyle = '#ff6b8a';
     g.fillRect(bx, by, bw * clamp01(u.hp / u.maxHp), 5);
-    const xpProgress = u.advancedSkill && !u.advancedSkillUnlocked
-      ? clamp01(u.drainExp / B.enemy.specialUnlockDrain)
-      : clamp01(u.exp / B.enemy.specialUnlockDrain);
+    const xpProgress = clamp01(u.exp / enemyExpNeeded(u.level, B));
     g.fillStyle = 'rgba(0, 0, 0, 0.85)';
-    g.fillRect(bx, by + 7, bw, 4);
-    g.fillStyle = u.advancedSkill && !u.advancedSkillUnlocked ? '#7ee7d6' : '#ffd36b';
+    g.fillRect(bx, by + 7, bw, u.advancedSkill && !u.advancedSkillUnlocked ? 8 : 4);
+    g.fillStyle = '#ffd36b';
     g.fillRect(bx, by + 7, bw * xpProgress, 4);
+    if (u.advancedSkill && !u.advancedSkillUnlocked) {
+      g.fillStyle = 'rgba(0, 0, 0, 0.85)';
+      g.fillRect(bx, by + 12, bw, 2);
+      g.fillStyle = '#7ee7d6';
+      g.fillRect(bx, by + 12, bw * clamp01(u.drainExp / B.enemy.specialUnlockDrain), 2);
+    }
 
     // 名前とレベル
     const nameText = `${style.icon}${u.name}`;

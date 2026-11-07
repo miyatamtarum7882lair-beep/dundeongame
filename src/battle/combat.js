@@ -18,6 +18,10 @@ import { calcRequiredClicks } from './escape.js';
 import { ClimaxController } from './climaxController.js';
 import { BuffManager, BUFFS, BUFF_IDS } from './buffs.js';
 import { loseHeroExp } from './expDrain.js';
+import { enemyExpNeeded } from './enemyStats.js';
+import { SkillDirector, normalizeStage, cuesFor } from './skillStage.js';
+import { STAGE_FX } from './stageFx.js';
+import { SKILL_STAGES } from '../data/skillStages.js';
 import { FlashbackController } from './flashback.js';
 import { FLASHBACK_STRONG } from '../data/flashbackRules.js';
 
@@ -83,6 +87,12 @@ export class Combat extends Emitter {
       emit: (name, payload) => this.emit(name, payload),
       isBlocked: () => this.climax.isClimax() || this.climax.isAfterglow()
     });
+    this.director = new SkillDirector({
+      maxDt: this.B.stage.maxDt,
+      onStart: (perf) => this.onStageStart(perf),
+      onHit: (perf, index) => this.onStageHit(perf, index),
+      onEnd: (perf, cancelled) => this.onStageEnd(perf, cancelled)
+    });
   }
 
   get hs() {
@@ -120,6 +130,7 @@ export class Combat extends Emitter {
   }
 
   resetFloor() {
+    this.director?.clear();
     this.grown = new Set();
     this.beat = 0;
     this.stunTurns = 0;
@@ -282,7 +293,7 @@ export class Combat extends Emitter {
       e.pendingSkill = null;
       const range = B.skills[pending.skillId]?.range ?? 1;
       if (dist > range || (pending.category === 'bind' && dist > 1)) return 'move';
-      if (pending.category === 'bind') this.startBound(e, pending.skillId);
+      if (pending.category === 'bind') this.startBound(e, pending.skillId, pending.ctx?.preFlashed);
       else this.useSkill(e, pending.skillId, pending.ctx);
       return null;
     }
@@ -335,22 +346,44 @@ export class Combat extends Emitter {
     const def = SKILL_DEFS[skillId];
     const motion = def.category === 'bind' ? bindTag(this.exp.hero.tx - e.tx, this.exp.hero.ty - e.ty) : def.motion ?? 'skill_sexyPose';
     const target = this.body(this.exp.hero);
-    e.pendingSkill = { skillId, category: def.category, ctx };
+    e.pendingSkill = { skillId, category: def.category, ctx: { ...ctx, preFlashed: true } };
     e.setDir(this.exp.hero.tx - e.tx, this.exp.hero.ty - e.ty);
     this.actedThisTurn = true;
     this.emit('anim', { unit: e, tag: motion });
     this.emit('se', { id: def.windupSe ?? 'warning', tx: e.tx, ty: e.ty });
     this.fx({ type: 'ring', x: target.x, y: target.y, r: 44, color: '#ff9ccf' });
     this.fx({ type: 'sparks', x: target.x, y: target.y - 36, color: '#ff9ccf', count: 5 });
-    this.emit('log', 'enemyWindup', { name: e.name, skill: DEFEAT_SKILLS[skillId]?.name ?? skillId });
+    this.emitSkillName(e, skillId, 0.9);
+    this.emit('log', 'enemyWindup', { name: e.name, skill: this.skillLabel(skillId) });
+    const stage = normalizeStage(SKILL_STAGES[skillId], def.category, this.B.stage);
+    this.director.start({
+      stage: {
+        ...stage,
+        durationSec: 0.05,
+        hits: { count: 1, startSec: 0, endSec: 0 },
+        hitNumbers: false,
+        fx: [],
+        se: []
+      },
+      payload: { e, skillId, def, attr: def.attr ?? this.attrOf(e.speciesId), ctx, skillName: this.skillLabel(skillId), windupOnly: true }
+    });
   }
 
-  startBound(e, skillId) {
+  startBound(e, skillId, preFlashed = false) {
     if (this.climax.blocksBinding()) {
       this.autoGuardBind(e);
       return;
     }
     if (this.bound) return this.addBoundBinder(e, skillId);
+    if (!preFlashed) {
+      const def = SKILL_DEFS[skillId];
+      const attr = def?.attr ?? this.attrOf(e.speciesId);
+      this.emitSkillName(e, skillId, 0.9);
+      const body = this.body(e);
+      const flashSec = this.B.stage.defaults.special.flashSec;
+      this.emit('skillFlash', { x: body.x, y: body.y, attr, sec: flashSec });
+      if (this.save.settings.flashback !== 'off') this.emit('se', { id: 'skillFlash', tx: e.tx, ty: e.ty });
+    }
     const dx = e.tx - this.exp.hero.tx;
     const dy = e.ty - this.exp.hero.ty;
     const heroDir = this.exp.hero.dir;
@@ -707,8 +740,25 @@ export class Combat extends Emitter {
 
   gainDrainExperience(enemy, amount) {
     if (!(amount > 0)) return;
-    enemy.exp += amount;
-    this.emit('enemyExperience', { enemy, amount });
+    const absorbedExp = amount * (this.B.enemy.absorbExpMultiplier ?? 1);
+    enemy.exp += absorbedExp;
+    this.emit('enemyExperience', { enemy, amount: absorbedExp });
+    while (enemy.exp >= enemyExpNeeded(enemy.level, this.B)) {
+      enemy.exp -= enemyExpNeeded(enemy.level, this.B);
+      const raceId = enemy.speciesId;
+      const nextLevel = (this.p.enemyLevels[raceId] ?? 0) + 1;
+      this.p.enemyLevels[raceId] = nextLevel;
+      const raceUnits = this.exp.units.filter((unit) => unit.kind === 'enemy' && unit.speciesId === raceId);
+      for (const unit of raceUnits) {
+        unit.level += 1;
+        unit.maxHp += this.B.enemy.hpPerLevel;
+        unit.hp = Math.min(unit.maxHp, unit.hp + this.B.enemy.hpPerLevel);
+        this.emit('anim', { unit, tag: 'skill_sexyPose' });
+        const pos = this.body(unit);
+        this.fx({ type: 'sparkle', x: pos.x, y: this.head(unit).y });
+      }
+      this.emit('log', 'enemyLevelUp', { name: enemy.name, level: enemy.level });
+    }
     if (!enemy.advancedSkill || enemy.advancedSkillUnlocked) return;
     enemy.drainExp += amount;
     if (enemy.drainExp < this.B.enemy.specialUnlockDrain) return;
@@ -750,148 +800,231 @@ export class Combat extends Emitter {
     this.exp.turnCount += 1;
   }
 
-  useSkill(e, skillId, ctx) {
-    const { B, p } = this;
+  skillLabel(skillId) {
+    return DEFEAT_SKILLS[skillId]?.name ?? SKILL_STAGES[skillId]?.name ?? skillId;
+  }
+
+  shouldBanner(def, rawStage) {
+    return rawStage?.banner ?? this.B.stage.bannerCategories.includes(def.category);
+  }
+
+  emitSkillName(e, skillId, holdSec) {
     const def = SKILL_DEFS[skillId];
-    const nums = B.skills[skillId];
-    const hs = this.hs;
+    if (!def || !this.shouldBanner(def, SKILL_STAGES[skillId])) return;
+    this.emit('skillName', {
+      key: skillId,
+      title: this.skillLabel(skillId),
+      sub: e.name,
+      attr: def.attr ?? this.attrOf(e.speciesId),
+      holdSec
+    });
+  }
+
+  stageContext(perf, index, progress, losses) {
+    const { e, def, attr } = perf.payload;
     const hero = this.exp.hero;
-    const skillName = DEFEAT_SKILLS[skillId]?.name ?? skillId;
-    const attr = def.attr ?? this.attrOf(e.speciesId);
-    if (FLASHBACK_STRONG.has(skillId)) this.requestFlashback('strong', e, attr, skillId);
-    else if (skillId === ctx.rememberedSkillId) this.requestFlashback('rematch', e, attr, skillId);
+    return {
+      hero: { body: this.body(hero), head: this.head(hero) },
+      enemy: { body: this.body(e), head: this.head(e) },
+      dir: { dx: Math.sign(e.tx - hero.tx), dy: Math.sign(e.ty - hero.ty) },
+      def, attr, index, count: perf.stage.hits.count, progress,
+      ...losses
+    };
+  }
 
-    this.actedThisTurn = true;
-    const d = this.nextDelay();
-    const dx = hero.tx - e.tx;
-    const dy = hero.ty - e.ty;
-    e.setDir(dx, dy);
-
-    const motion = def.category === 'attack'
-      ? attackTag(dx, dy)
-      : def.category === 'bind'
-        ? bindTag(dx, dy)
-        : def.motion ?? 'skill_sexyPose';
-    this.emit('anim', { unit: e, tag: motion, delay: d });
-    if (skillId === ctx.rememberedSkillId) {
-      this.emit('log', 'rememberUse', { name: e.name, skill: skillName });
+  runCues(perf, at, index, losses = { hpLoss: 0, mpLoss: 0, expLost: 0 }) {
+    const { e, def } = perf.payload;
+    const { stage } = perf;
+    const count = stage.hits.count;
+    const progress = at === 'start' ? 0 : at === 'end' ? 1 : count > 1 ? index / (count - 1) : 0;
+    const context = this.stageContext(perf, index, progress, losses);
+    for (const cue of cuesFor(stage.fx, at, index, count)) {
+      const build = STAGE_FX[cue.id];
+      if (!build) {
+        console.warn(`Unknown skill stage effect: ${cue.id}`);
+        continue;
+      }
+      for (const fx of build({ ...context, opts: cue })) {
+        this.fx({ ...fx, delay: (fx.delay ?? 0) + (cue.delay ?? 0) });
+      }
     }
+    for (const cue of cuesFor(stage.se, at, index, count)) {
+      const id = cue.id === '$skill' ? def.se : cue.id;
+      if (!id) continue;
+      const from = cue.gain ?? 1;
+      const to = cue.gainEnd ?? from;
+      this.emit('se', {
+        id, tx: e.tx, ty: e.ty,
+        gain: from + (to - from) * progress,
+        delay: cue.delay ?? 0,
+        params: { progress }
+      });
+    }
+  }
 
-    // ダメージとMP吸収
+  onStageStart(perf) {
+    const { e, skillId, def, attr, ctx, skillName, windupOnly } = perf.payload;
+    const { stage } = perf;
+    if (!windupOnly) {
+      const hero = this.exp.hero;
+      const motion = def.category === 'attack'
+        ? attackTag(hero.tx - e.tx, hero.ty - e.ty)
+        : def.category === 'bind'
+          ? bindTag(hero.tx - e.tx, hero.ty - e.ty)
+          : def.motion ?? 'skill_sexyPose';
+      this.emit('anim', { unit: e, tag: motion });
+      if (skillId === ctx?.rememberedSkillId) this.emit('log', 'rememberUse', { name: e.name, skill: skillName });
+    }
+    if (stage.flashSec > 0) {
+      const b = this.body(e);
+      this.emit('skillFlash', { x: b.x, y: b.y, attr, sec: stage.flashSec });
+      if (this.save.settings.flashback !== 'off') this.emit('se', { id: 'skillFlash', tx: e.tx, ty: e.ty });
+    }
+    if (windupOnly) return;
+    if (this.shouldBanner(def, SKILL_STAGES[skillId])) {
+      this.emit('skillName', {
+        key: skillId,
+        title: skillName,
+        sub: e.name,
+        attr,
+        holdSec: Math.max(this.B.stage.banner.holdMinSec, stage.flashSec + stage.durationSec + 0.2)
+      });
+    }
+    this.runCues(perf, 'start', 0);
+  }
+
+  onStageHit(perf, index) {
+    const pl = perf.payload;
+    if (pl.windupOnly) return;
+    const { B, hs } = this;
+    const { e, skillId, def, nums, attr, skillName } = pl;
+    const { stage } = perf;
+    const count = stage.hits.count;
+    const per = stage.perHit;
     const guard = this.guarding ? B.battle.guardMul : 1;
+    const scale = this.climax.drainScale() * this.buffs.mult('drainTaken');
+
     let hpLoss = 0;
-    if (nums.hpRate) {
+    if (nums.hpRate && per.hp > 0) {
       const [lo, hi] = def.category === 'attack' ? [B.damage.minRate, B.damage.maxRate] : [0, 1];
       const rate = rollRate(nums.hpRate, lo, hi, e.level - hs.level, B);
-      hpLoss = Math.min(hs.hp, Math.max(1, Math.round(hs.maxHp * rate * guard)));
+      hpLoss = Math.min(hs.hp, Math.max(1, Math.round(hs.maxHp * rate * per.hp * guard)));
     }
     let mpLoss = 0;
-    if (nums.mpRate) {
-      const drainLv = getAbilityLevel(p, e.speciesId, drainAbilityId(attr));
-      const loseMp = (p.debuffs.loseHabit.byRace[e.speciesId] ?? 0) * B.habit.loseMpPerStage;
-      const soft = softnessEffects(getSoftness(e.speciesId, attr, B, p.softnessOverrides), B).drainMul;
-      const mul = Math.min(B.bound.absorbCap, (1 + B.battle.drainPerLevel * drainLv) * (1 + loseMp) * soft);
-      const scale = this.climax.drainScale() * this.buffs.mult('drainTaken');
-      mpLoss = Math.min(hs.mp, Math.round(hs.maxMp * nums.mpRate * mul * guard * scale));
+    if (nums.mpRate && per.mp > 0) {
+      mpLoss = Math.min(hs.mp, Math.round(hs.maxMp * nums.mpRate * pl.mpMul * per.mp * guard * scale));
+    }
+    let expLost = 0;
+    if (nums.expRate && per.exp > 0) {
+      expLost = this.drainHeroExp(nums.expRate * pl.mpMul * per.exp * guard * scale).lost;
     }
     hs.hp -= hpLoss;
     hs.mp -= mpLoss;
+    pl.total.hp += hpLoss;
+    pl.total.mp += mpLoss;
+    pl.total.exp += expLost;
 
-    // 演出
-    const hb = this.body(hero);
-    const eb = this.body(e);
-    const eh = this.head(e);
-    const attacker = { dx: Math.sign(e.tx - hero.tx), dy: Math.sign(e.ty - hero.ty) };
-    this.emit('se', { id: def.se, tx: e.tx, ty: e.ty, delay: d + 0.1 });
+    const absorbed = mpLoss + expLost;
+    if (absorbed > 0) this.gainDrainExperience(e, absorbed);
+    if (absorbed > 0) this.emit('drainPulse', { strength: 0.5 });
 
-    switch (def.fx) {
-      case 'hit':
-      case 'stomp':
-        this.fx({ type: 'impact', delay: d + 0.12, x: hb.x, y: hb.y, size: 30 });
-        this.fx({ type: 'sparks', delay: d + 0.12, x: hb.x, y: hb.y, color: '#ffb3d1', count: 8 });
-        break;
-      case 'kiss':
-        this.fx({ type: 'stream', delay: d + 0.1, from: { x: eb.x, y: eh.y + 24 }, to: { x: hb.x, y: hb.y - 20 }, count: 10, durSec: 0.45, arcPx: 50 });
-        this.fx({ type: 'hearts', delay: d + 0.5, x: hb.x, y: hb.y - 30, count: 7, size: 0.9 });
-        this.fx({ type: 'tint', delay: d + 0.3 });
-        break;
-      case 'embrace':
-        this.fx({ type: 'hearts', delay: d + 0.15, x: hb.x, y: hb.y - 20, count: 9, size: 1 });
-        this.fx({ type: 'tint', delay: d + 0.2 });
-        break;
-      case 'blowKiss':
-        this.fx({
-          type: 'heartProjectile',
-          delay: d + 0.15,
-          from: { x: eb.x, y: eh.y + 24 },
-          to: { x: hb.x, y: this.head(hero).y - 4 },
-          durSec: 0.8,
-          arcPx: 92,
-          size: 1.15
-        });
-        this.fx({
-          type: 'stream',
-          delay: d + 0.2,
-          from: { x: eb.x, y: eh.y + 24 },
-          to: { x: hb.x, y: hb.y - 24 },
-          count: 5,
-          size: 0.38,
-          durSec: 0.65,
-          arcPx: 82
-        });
-        break;
-      case 'breath':
-        this.fx({ type: 'breath', delay: d + 0.15, from: { x: eb.x, y: eh.y + 28 }, to: { x: hb.x, y: hb.y - 20 } });
-        this.fx({ type: 'tint', delay: d + 0.35 });
-        break;
-      case 'pose':
-        this.fx({ type: 'ring', delay: d + 0.15, x: eb.x, y: eb.y, r: 50, color: '#ff9ccf' });
-        this.fx({ type: 'hearts', delay: d + 0.25, x: hb.x, y: hb.y - 24, count: 6, size: 1 });
-        this.fx({ type: 'tint', delay: d + 0.35 });
-        break;
-      default:
-        break;
-    }
-
-    if (attr === 'mouth' && (hpLoss > 0 || mpLoss > 0 || def.category === 'bind' || def.fx === 'blowKiss')) {
-      this.fx({
-        type: 'kiss',
-        delay: d + 0.28,
-        x: this.body(hero).x,
-        y: this.head(hero).y + 10,
-        dx: attacker.dx,
-        dy: attacker.dy
-      });
-    }
-
+    const hb = this.body(this.exp.hero);
+    const headY = this.head(this.exp.hero).y;
     if (hpLoss > 0) {
-      this.fx({ type: 'damage', delay: d + 0.14, x: hb.x, y: this.head(hero).y, text: String(hpLoss), style: 'hero', big: true });
-      this.fx({ type: 'shake', delay: d + 0.12, power: clamp((hpLoss / hs.maxHp) * 6, 0.5, 1.4) });
-      this.emit('log', 'heroDamaged', { name: e.name, skill: skillName, amount: hpLoss });
+      this.fx({ type: 'damage', delay: 0.14, x: hb.x, y: headY, text: String(hpLoss), style: 'hero', big: true });
+      this.fx({ type: 'shake', delay: 0.12, power: clamp((hpLoss / hs.maxHp) * 6, 0.5, 1.4) });
     }
-    if (mpLoss > 0) {
-      this.gainDrainExperience(e, mpLoss);
-      this.fx({ type: 'damage', delay: d + 0.26, x: hb.x, y: this.head(hero).y - 26, text: `MP -${mpLoss}`, style: 'mp' });
-      this.emit('drainPulse', { strength: 0.6, delay: d + 0.26 });
-      this.emit('log', 'heroDrained', { name: e.name, skill: skillName, amount: mpLoss });
-      if (hs.mp === 0) this.emit('log', 'mpEmpty', {});
-      this.abilityEvents(addAbilityProgress(p, e.speciesId, drainAbilityId(attr), B, { pts: 1, grownThisBattle: this.grown }));
+    if (stage.hitNumbers) {
+      if (mpLoss > 0) this.fx({ type: 'damage', delay: 0.26, x: hb.x, y: headY - 26, text: `MP -${mpLoss}`, style: 'mp' });
+      if (expLost > 0) {
+        this.fx({
+          type: 'damage', delay: 0.26, x: hb.x, y: headY - (mpLoss > 0 ? 44 : 26),
+          text: `EXP -${expLost}`, style: 'info'
+        });
+      }
     }
-    this.witness(nums.allyCharm ?? (def.category === 'attack' ? B.ally.charmOnHit : B.ally.charmOnDrain));
+    this.runCues(perf, 'hit', index, { hpLoss, mpLoss, expLost });
+    this.witness((nums.allyCharm ?? (def.category === 'attack' ? B.ally.charmOnHit : B.ally.charmOnDrain)) / count);
 
+    if (mpLoss > 0 && hs.mp === 0 && !pl.mpEmptyLogged) {
+      pl.mpEmptyLogged = true;
+      this.emit('log', 'mpEmpty', {});
+    }
+    if (index === count - 1 && pl.total.mp > 0) {
+      this.abilityEvents(addAbilityProgress(this.p, e.speciesId, drainAbilityId(attr), B, {
+        pts: 1, grownThisBattle: this.grown
+      }));
+    }
     if (hs.hp <= 0) {
-      this.emit('anim', { unit: hero, tag: 'down', delay: d + 0.2 });
+      this.emit('anim', { unit: this.exp.hero, tag: 'down', delay: 0.2 });
       if (!this.defeated) {
         this.defeated = { raceId: e.speciesId, skillId, attr, name: e.name };
         this.emit('log', 'heroDefeated', { name: e.name, skill: skillName });
       }
-    } else if (hpLoss > 0) {
-      this.emit('anim', { unit: hero, tag: 'hit', delay: d + 0.12 });
+      this.director.cancel();
+      return;
+    }
+    if (hpLoss > 0) this.emit('anim', { unit: this.exp.hero, tag: 'hit', delay: 0.12 });
+    this.emit('persist');
+  }
+
+  onStageEnd(perf, cancelled) {
+    const pl = perf.payload;
+    if (pl.windupOnly) return;
+    const { e, skillName, total } = pl;
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    const headY = this.head(hero).y;
+    if (total.hp > 0) this.emit('log', 'heroDamaged', { name: e.name, skill: skillName, amount: total.hp });
+    if (total.mp > 0) this.emit('log', 'heroDrained', { name: e.name, skill: skillName, amount: total.mp });
+    if (total.exp > 0) this.emit('log', 'heroExpDrained', { name: e.name, skill: skillName, amount: total.exp });
+
+    if (perf.stage.hits.count > 1 && !perf.stage.hitNumbers) {
+      if (total.mp > 0) this.fx({ type: 'damage', x: hb.x, y: headY - 26, text: `MP -${total.mp}`, style: 'mp', big: true });
+      if (total.exp > 0) {
+        this.fx({
+          type: 'damage', x: hb.x, y: headY - (total.mp > 0 ? 62 : 26),
+          text: `EXP -${total.exp}`, style: 'info', big: true
+        });
+      }
+    }
+    if (!cancelled) {
+      this.runCues(perf, 'end', perf.stage.hits.count - 1, {
+        hpLoss: total.hp, mpLoss: total.mp, expLost: total.exp
+      });
     }
     this.emit('persist');
   }
 
-  // 主人公の被弾を近くで見た仲間の、魅了ゲージを上げる
+  useSkill(e, skillId, ctx) {
+    const { B, p } = this;
+    const def = SKILL_DEFS[skillId];
+    if (!def) return;
+    const nums = B.skills[skillId] ?? {};
+    const attr = def.attr ?? this.attrOf(e.speciesId);
+    if (FLASHBACK_STRONG.has(skillId)) this.requestFlashback('strong', e, attr, skillId);
+    else if (skillId === ctx?.rememberedSkillId) this.requestFlashback('rematch', e, attr, skillId);
+
+    let mpMul = 1;
+    if (nums.mpRate || nums.expRate) {
+      const drainLv = getAbilityLevel(p, e.speciesId, drainAbilityId(attr));
+      const loseMp = (p.debuffs.loseHabit.byRace[e.speciesId] ?? 0) * B.habit.loseMpPerStage;
+      const soft = softnessEffects(getSoftness(e.speciesId, attr, B, p.softnessOverrides), B).drainMul;
+      mpMul = Math.min(B.bound.absorbCap, (1 + B.battle.drainPerLevel * drainLv) * (1 + loseMp) * soft);
+    }
+    let stage = normalizeStage(SKILL_STAGES[skillId], def.category, B.stage);
+    if (ctx?.preFlashed) stage = { ...stage, flashSec: 0 };
+    this.director.start({
+      stage,
+      payload: {
+        e, skillId, def, nums, attr, ctx, mpMul,
+        skillName: this.skillLabel(skillId),
+        total: { hp: 0, mp: 0, exp: 0 },
+        mpEmptyLogged: false
+      }
+    });
+    this.actedThisTurn = true;
+  }
   witness(gain) {
     const { B } = this;
     const hero = this.exp.hero;
@@ -1030,6 +1163,7 @@ export class Combat extends Emitter {
     p.runCount += 1;
     this.defeated = null;
     this.stunTurns = 0;
+    this.director.clear();
     this.climax.reset();
     this.buffs.clear();
     this.flashback.reset();

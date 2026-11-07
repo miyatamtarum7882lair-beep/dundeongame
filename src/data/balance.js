@@ -93,8 +93,9 @@ export const B = deepFreeze({
   enemy: {
     baseHp: 60,
     hpPerLevel: 14,
-    expBase: 200,
-    expPerLevel: 60,
+    expBase: 30,
+    expPerLevel: 12,
+    absorbExpMultiplier: 2,
     levelPerFloor: 1,
     rankBonus: { basic: 0, unique: 2, elite: 4, boss: 7 },
     abilityPerLevel: 6,
@@ -115,7 +116,8 @@ export const B = deepFreeze({
     pinkBreath: { mpRate: 0.06, hpRate: 0.03, range: 1, allyCharm: 12 },
     deepDrainKiss: { mpRate: 0.18, range: 4, windup: true },
     foxPounce: { hpRate: 0.16, mpRate: 0.08, range: 3, windup: true },
-    sexyPose: { mpRate: 0.04, range: 3, allyCharm: 10, windup: true }
+    sexyPose: { mpRate: 0.04, range: 3, allyCharm: 10, windup: true },
+    drainBerochu: { expRate: 0.05, range: 1, windup: true, allyCharm: 18 }
   },
   debuffPanel: {
     columns: 3,
@@ -411,6 +413,16 @@ export const B = deepFreeze({
     },
     reduced: { artAlpha: 0.35 }
   },
+  stage: {
+    maxDt: 0.25,
+    bannerCategories: ['special', 'bind'],
+    defaults: {
+      attack: { flashSec: 0, durationSec: 0.35, hitAt: 0.05 },
+      special: { flashSec: 0.25, durationSec: 0.8, hitAt: 0.1 }
+    },
+    banner: { y: 96, minWidthPx: 360, fontPx: 34, subPx: 18, holdMinSec: 1, fadeInSec: 0.12, fadeOutSec: 0.3, slidePx: 40 },
+    flash: { localAlpha: 0.35, veilAlpha: 0.08, radiusPx: 150 }
+  },
   buffs: {
     durationTurns: 20
   },
@@ -431,6 +443,7 @@ export const B = deepFreeze({
     charmMax: 100
   },
   debug: {
+    heroLevelMax: 99,
     spatialLog: false,
     bindLog: false
   }

@@ -162,6 +162,11 @@ export const SYNTH = {
     });
     noise(rig, { filter: 'highpass', f0: 3000, f1: 1800, dur: 0.4, gain: 0.08, attack: 0.1 });
   },
+  skillFlash(rig) {
+    tone(rig, { type: 'triangle', f0: 600, f1: 1800, dur: 0.2, gain: 0.12, attack: 0.02 });
+    tone(rig, { f0: 1200, f1: 2400, start: 0.05, dur: 0.18, gain: 0.05, attack: 0.02 });
+    noise(rig, { filter: 'highpass', f0: 2500, f1: 4500, dur: 0.15, gain: 0.08, attack: 0.03 });
+  },
   climaxStart(rig) {
     tone(rig, { f0: 80, f1: 220, dur: 1.2, gain: 0.35, attack: 0.4 });
     noise(rig, { f0: 400, f1: 5000, q: 3, dur: 1.1, gain: 0.3, attack: 0.6 });

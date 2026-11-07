@@ -16,5 +16,6 @@ export const SKILL_DEFS = {
   pinkBreath: { category: 'special', attr: 'mouth', fx: 'breath', se: 'breath', motion: 'skill_pinkBreath' },
   sexyPose: { category: 'special', attr: 'mouth', fx: 'pose', se: 'warning', motion: 'skill_sexyPose' },
   deepDrainKiss: { category: 'special', attr: 'mouth', fx: 'kiss', se: 'deepDrainKiss', motion: 'skill_sexyPose', windupSe: 'warning' },
-  foxPounce: { category: 'special', attr: 'hip', fx: 'hit', se: 'thud', motion: 'skill_sexyPose', windupSe: 'warning' }
+  foxPounce: { category: 'special', attr: 'hip', fx: 'hit', se: 'thud', motion: 'skill_sexyPose', windupSe: 'warning' },
+  drainBerochu: { category: 'special', attr: 'mouth', fx: 'kiss', se: 'vacuumKiss', motion: 'skill_sexyPose', windupSe: 'warning' }
 };

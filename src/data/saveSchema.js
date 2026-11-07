@@ -59,6 +59,7 @@ export const saveSchema = {
       fullDefeatCount: 0, betrayalCount: 0, begCount: 0
     },
     raceAbilities: defaultRaceAbilities,
+    enemyLevels: {},
     learnedSkills: {},   // 敵種族ID → 習得した特殊攻撃IDの配列（種族単位で共有）
     learning: {          // v6.6
       markScore: {},          // 種族ID → 0〜100
@@ -86,6 +87,7 @@ export const saveSchema = {
   },
   currentRun: {
     seed: 0, dungeon: 1, floor: 1, floorState: {}, gold: 0,
+    debugOptions: { priestCompanion: true, enemySpawnWeights: {} },
     erosion: 0,
     defeatHistory: [],
     hero: { hp: 100, maxHp: 100, mp: 300, maxMp: 300, level: 20, exp: 0, regretStacks: 0, weapon: 'sword' },
