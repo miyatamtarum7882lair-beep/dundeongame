@@ -3,7 +3,7 @@
 //   所持金        save.currentRun.gold（ランごと。敗北するとすべて貢がされる）
 //   装備          save.persistent.equipment = { slots: { mouth, hand, bust, hip, foot }, bag: [] }（ランをまたぐ）
 //   アイテム      save.persistent.consumables[id] = 個数
-//   盗まれた物    save.persistent.stolenItems = [{ id, raceId }]（商人ちゃんの店で買い戻せる）
+//   盗まれた物    save.persistent.stolenItems = [{ id, raceId }]（行商ちゃんの店で買い戻せる）
 //   貢いだ額      save.persistent.tributes[raceId]
 //   拠点          save.persistent.baseUpgrades[id] = 段階、雪辱ポイントは persistent.rp
 import { ENEMIES_BY_ID, ATTRS } from '../data/enemies.js';
@@ -28,7 +28,10 @@ export function ensureEconomy(p) {
 
 export function makeGear(id) {
   const g = GEAR[id];
-  return { kind: 'gear', id, slot: g.slot, name: g.name, resist: g.resist, dur: g.dur, maxDur: g.dur };
+  const item = { kind: 'gear', id, slot: g.slot, name: g.name, resist: g.resist, dur: g.dur, maxDur: g.dur };
+  if (g.touchAlways) item.touchAlways = true;
+  if (g.attackMul) item.attackMul = g.attackMul;
+  return item;
 }
 
 export class Economy {
@@ -50,6 +53,24 @@ export class Economy {
     if (item?.kind === 'gift') v -= this.B.gifts.resistDownPerLevel * item.level;
     v += 3 * (p.baseUpgrades.resistAll ?? 0);
     return v;
+  }
+
+  // 攻撃すると必ずチャームポイントに触れてしまう装備（触れたがりの手袋）
+  touchGear() {
+    for (const s of SLOTS) {
+      const it = this.p.equipment.slots[s];
+      if (it?.kind === 'gear' && it.dur > 0 && (it.touchAlways || GEAR[it.id]?.touchAlways)) return it;
+    }
+    return null;
+  }
+
+  attackMul() {
+    let m = 1;
+    for (const s of SLOTS) {
+      const it = this.p.equipment.slots[s];
+      if (it?.kind === 'gear' && it.dur > 0) m *= it.attackMul ?? GEAR[it.id]?.attackMul ?? 1;
+    }
+    return m;
   }
 
   giftsOf(raceId) {
@@ -123,6 +144,97 @@ export class Economy {
         c.fx({ type: 'callout', delay: 0.35, x: c.body(e).x, y: c.head(e).y - 30, text: `${ITEMS[id].name}、もーらい♡`, color: c.theme(e).main, size: 18 });
       }
     }
+  }
+
+  // ---- アイテムを奪われ、その場で使われる ----
+  // 隣にいる敵（または拘束している敵）がポーチを漁り、奪ったアイテムを敵の都合のいいように使う
+  canSnatch(e) {
+    if (!e || e.kind !== 'enemy') return false;
+    if ((e.snatchCooldown ?? -Infinity) > this.combat.exp.turnCount) return false;
+    return Object.values(this.p.consumables).some((n) => n > 0);
+  }
+
+  snatchAndUse(e) {
+    if (!this.canSnatch(e)) return null;
+    const c = this.combat;
+    const S = this.B.itemSnatch;
+    const owned = Object.entries(this.p.consumables).filter(([, n]) => n > 0).map(([id]) => id);
+    const id = owned[Math.floor(Math.random() * owned.length)];
+    this.p.consumables[id] -= 1;
+    e.snatchCooldown = c.exp.turnCount + S.cooldownTurns;
+    c.actedThisTurn = true;
+    const hero = c.exp.hero;
+    const hb = c.body(hero);
+    const eb = c.body(e);
+    const eh = c.head(e);
+    const th = c.theme(e);
+    const name = ITEMS[id].name;
+    e.setDir?.(hero.tx - e.tx, hero.ty - e.ty);
+    c.emit('anim', { unit: e, tag: 'skill_blowKiss' });
+    // 1) ポーチを漁られる → アイテムが敵の手へ
+    c.fx({ type: 'ring', x: hb.x, y: hb.y + 6, r: 30, squash: 0.6, color: th.main, width: 3, alpha: 0.7, life: 0.4 });
+    c.fx({ type: 'flow', delay: 0.25, from: { x: hb.x, y: hb.y + 4 }, to: { x: eb.x, y: eh.y }, shapes: ['star', 'heart', 'dot'], colors: ['#ffffff', '#9fe3ff', th.main], count: 14, size: [4, 8], life: 0.6, glow: true });
+    c.fx({ type: 'callout', delay: 0.3, x: eb.x, y: eh.y - 34, text: `${name}、もーらい♡`, color: th.main, size: 20, life: 1.3 });
+    c.emit('se', { id: 'pouchRummage', tx: e.tx, ty: e.ty });
+    c.emit('log', 'itemSnatched', { name: e.name, item: name });
+    // 2) 敵が、自分の都合のいいように使う
+    const effect = this.snatchEffect(e, id);
+    c.later(0.9, () => {
+      c.fx({ type: 'wash', color: th.main, alpha: 0.2, mode: 'full', life: 1.0 });
+      c.fx({ type: 'burst', x: eb.x, y: eh.y, shapes: ['heart', 'star'], colors: [th.main, th.glow, '#ffffff'], count: 16, speed: [50, 150], size: [4, 8], life: 0.9, gravity: -40, glow: true });
+      c.fx({ type: 'callout', x: hb.x, y: c.head(hero).y - 70, text: effect.callout, color: th.main, size: 20, life: 1.6 });
+      c.emit('se', { id: 'snatchUse', tx: e.tx, ty: e.ty });
+      if (c.exp.units.includes(e)) c.speak(e, effect.line);
+      c.emit('log', 'itemSnatchUsed', { name: e.name, item: name, text: effect.text });
+    });
+    c.emit('persist');
+    return { id, ...effect };
+  }
+
+  snatchEffect(e, id) {
+    const c = this.combat;
+    const S = this.B.itemSnatch;
+    const hs = c.hs;
+    const hero = c.exp.hero;
+    const hb = c.body(hero);
+    const th = c.theme(e);
+    const condId = conditionOfRace(e.speciesId);
+    const gainCond = (cid, n, unit) => {
+      if (cid) c.handleEvents(c.conditions.gain(cid, n, { floorKey: c.floorKey() }), unit, null);
+    };
+    if (id === 'manaVial') {
+      const heal = Math.round(e.maxHp * S.healRate);
+      e.hp = Math.min(e.maxHp, e.hp + heal);
+      const lose = Math.min(hs.mp, Math.round(hs.maxMp * S.mpStealRate));
+      hs.mp -= lose;
+      c.fx({ type: 'flow', delay: 1.1, from: { x: hb.x, y: c.head(hero).y + 4 }, to: c.head(e), shapes: ['heart', 'dot'], colors: [th.main, '#9fe3ff'], count: 14, size: [4, 7], life: 0.7, glow: true });
+      c.fx({ type: 'damage', delay: 1.2, x: hb.x, y: c.head(hero).y - 20, text: `MP -${lose}`, style: 'mp' });
+      if (lose > 0) c.later(1.2, () => c.gainDrainExperience(e, lose));
+      return { text: `魔力の小瓶を飲まれ、口移しで MP を ${lose} 吸われた`, callout: '（口移しで、魔力ごと吸われる……♡）', line: 'んく……ぷは♡ 半分、口移しで返してあげる……ちゅ♡ ……あ、ごめん、ぜんぶ吸っちゃった♡' };
+    }
+    if (id === 'soothingIncense') {
+      gainCond(condId, S.incenseGain, e);
+      c.fx({ type: 'cloud', delay: 0.9, from: c.body(e), to: hb, colors: [th.main, th.glow, '#ffd6ec'], count: 16, r: [20, 70], life: 1.6, spread: 70, lift: 16 });
+      return { text: '安らぎの香を、その子の匂いに変えて焚かれた', callout: '（甘い匂いが、肺の奥まで……♡）', line: 'このお香、わたしの匂いに変えちゃった♡ ほら、深呼吸して？ もっと、わたしで満たしてあげる' };
+    }
+    if (id === 'purifyingDrop') {
+      c.handleEvents(c.conditions.addStatus('tempted', S.temptTurns), e, null);
+      return { text: '浄めの雫を、その子のチャームポイントに垂らして見せつけられた', callout: '（きらきら濡れて……目が、離せない♡）', line: 'ほら、見て♡ 浄めの雫、ここに垂らすと……きらきらしてきれいでしょ？ 触りたい？' };
+    }
+    if (id === 'lurePerfume') {
+      for (const u of c.exp.units) if (u.kind === 'enemy') u.lured = true;
+      for (const u of c.exp.units) {
+        if (u.kind !== 'enemy' || !c.exp.map.isVisible(u.tx, u.ty)) continue;
+        gainCond(conditionOfRace(u.speciesId), S.perfumeGain, u);
+      }
+      c.handleEvents(c.conditions.addStatus('feinted', 3), e, null);
+      c.fx({ type: 'cloud', delay: 0.9, from: c.body(e), to: hb, colors: ['#ff9fd0', '#ffd6ec', th.main], count: 20, r: [30, 90], life: 1.8, spread: 110, lift: 20 });
+      return { text: '誘惑の香水を、その子自身に振りかけられた。この階の敵がみんな寄ってくる', callout: '（みんなの匂いが、混ざって……♡）', line: 'しゅっ♡ ふふ、これでみーんな、あなたのところに集まってくるよ？ 楽しみだね♡' };
+    }
+    // 身代わりのお守り：キスで穢されて、砕かれる
+    c.later(1.1, () => c.gainDrainExperience(e, S.amuletExp));
+    gainCond(condId, 1, e);
+    return { text: '身代わりのお守りに口づけされ、砕かれた', callout: '（お守りが……あの子の色に……）', line: 'ちゅ♡ ……はい、もう守ってくれないね。これからは、わたしが守ってあげる♡' };
   }
 
   // 拘束中のおねだりに、お金を差し出す（貢ぎ）。脱出が進む代わりに、その敵が強くなる
@@ -235,7 +347,7 @@ export class Economy {
     const item = p.equipment.bag[index];
     if (!item || item.kind !== 'gear') return { ok: false, message: 'それは着けられない' };
     const cur = p.equipment.slots[item.slot];
-    if (cur?.kind === 'gift') return { ok: false, message: `${cur.name}が外れない……（商人ちゃんに頼むしかない）` };
+    if (cur?.kind === 'gift') return { ok: false, message: `${cur.name}が外れない……（行商ちゃんに頼むしかない）` };
     p.equipment.bag.splice(index, 1);
     if (cur) p.equipment.bag.push(cur);
     p.equipment.slots[item.slot] = item;
@@ -246,7 +358,7 @@ export class Economy {
     const p = this.p;
     const cur = p.equipment.slots[slot];
     if (!cur) return { ok: false, message: '何も着けていない' };
-    if (cur.kind === 'gift') return { ok: false, message: `${cur.name}が外れない……（商人ちゃんに頼むしかない）` };
+    if (cur.kind === 'gift') return { ok: false, message: `${cur.name}が外れない……（行商ちゃんに頼むしかない）` };
     p.equipment.slots[slot] = null;
     p.equipment.bag.push(cur);
     return { ok: true, message: `${cur.name}を外した` };
@@ -309,7 +421,7 @@ export class Economy {
     if ((this.run.perfumeTurns ?? 0) > 0) this.run.perfumeTurns -= 1;
   }
 
-  // ---- 商人ちゃん ----
+  // ---- 行商ちゃん ----
   priceMul() {
     const level = corruptionState(this.combat.p).level;
     const disc = 1 - 0.05 * (this.p.baseUpgrades.merchantDiscount ?? 0);

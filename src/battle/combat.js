@@ -33,10 +33,22 @@ import { themeOf, RESIST_COLORS } from '../data/enemyThemes.js';
 import { formationFor } from '../data/bindFormations.js';
 import { bindSideOf } from '../ui/boundCharmMath.js';
 import { charmAttrsOf } from '../data/charmAttrs.js';
-import { PairBonds, uniteNameOf, rubAttrsOf, partnerReady } from './pairBond.js';
-import { Economy } from './economy.js';
+import { PairBonds, uniteNameOf, rubAttrsOf, partnerReady, uniteTypeFor } from './pairBond.js';
+import { ENEMY_GROUPS, sharedGroup } from '../data/enemyGroups.js';
+import { Economy, conditionOfRace } from './economy.js';
+import { Gaze } from './gaze.js';
+import { remember, escapeMulFor, drainMulFor, startSurrenderFor } from './enemyMemory.js';
+import { powerMulFor, resistBonusMulFor, onResist, onLand, bindDrainMulFor, bindExpMulFor, tickPressure, escapeMulForBound } from './enemyTraits.js';
 
 const WEAPON_NAMES = { sword: '剣', fist: '拳' };
+// 触れたがりの手袋で、攻撃のたびにチャームポイントへ触れられた敵の声
+const TOUCH_GEAR_LINES = {
+  mouth: ['ん……♡ 唇、触りたかったの？', 'ふふ、攻撃するふりして、唇なぞってる♡', 'その指、舐めちゃおっか♡'],
+  bust: ['きゃっ♡ ……むにゅって、したね？', '殴るんじゃなくて、揉みにきたんだ♡', 'ほら、もっと沈めていいよ？♡'],
+  hand: ['ぎゅっ♡ ……手、つなぎたかったんだ', '攻撃なのに、指からめてくるんだ♡', 'にぎにぎ……♡ 離してあげない'],
+  hip: ['ひゃん♡ お尻、撫でたでしょ', 'ふふ、またお尻に手が来た♡', 'そんなに触りたいなら、押し付けてあげる♡'],
+  foot: ['くすぐった……♡ 脚、好きなんだ？', '攻撃しながら太もも撫でるの、えっち♡', 'その手、踏んじゃおっかな♡']
+};
 const ALLY_NAMES = { priest: '僧侶', mage: '魔法使い' };
 
 function attackTag(dx, dy) {
@@ -102,6 +114,7 @@ export class Combat extends Emitter {
     this.conditions = new HeroConditions(this.B, () => this.save);
     this.bonds = new PairBonds(this);
     this.eco = new Economy(this);
+    this.gaze = new Gaze(this);
     this.director = new SkillDirector({
       maxDt: this.B.stage.maxDt,
       onStart: (perf) => this.onStageStart(perf),
@@ -243,6 +256,7 @@ export class Combat extends Emitter {
     this.handleEvents(recordChoice(this.p, enemy.speciesId, skillId, answer, this.B), enemy, skillId);
     if (answer === 'accept') this.p.stats.acceptCount = (this.p.stats.acceptCount ?? 0) + 1;
     else if (answer === 'timeout') this.p.stats.timeoutCount = (this.p.stats.timeoutCount ?? 0) + 1;
+    if (answer === 'resist') onResist(this, enemy);
     if (answer === 'resist' && def?.cond) {
       this.handleEvents(this.conditions.recordResist(def.cond.id), enemy, skillId);
     }
@@ -284,6 +298,7 @@ export class Combat extends Emitter {
     this.flashback.syncFloor();
     this.conditions.onFloorStart();
     this.bonds.reset();
+    this.save.currentRun.gazeLock = 0;
   }
 
   beginTurn() {
@@ -320,7 +335,8 @@ export class Combat extends Emitter {
     const stage = p.debuffs.loseHabit.byRace[enemy.speciesId] ?? 0;
     const cut = Math.min(stage * B.habit.loseAttackPerStage, B.habit.loseAttackCap);
     const rate = rollRate(B.battle.rate[weapon] * (1 - cut), W.minRate, W.maxRate, hs.level - enemy.level, B);
-    const dmg = calcDamage(enemy.maxHp, rate);
+    const touchGear = this.eco.touchGear();
+    const dmg = Math.max(1, Math.round(calcDamage(enemy.maxHp, rate) * this.eco.attackMul()));
     enemy.hp = Math.max(0, enemy.hp - dmg);
     this.bonds.interrupt(enemy);
 
@@ -340,19 +356,22 @@ export class Combat extends Emitter {
     if (enemy.hp > 0) {
       this.emit('anim', { unit: enemy, tag: 'hit', delay: d + 0.05 });
     }
-    if (weapon === 'fist') this.touchCheck(enemy, d);
+    if (touchGear) this.touchCheck(enemy, d, touchGear);
+    else if (weapon === 'fist') this.touchCheck(enemy, d);
     if (enemy.hp <= 0) this.killEnemy(enemy, d + 0.1);
   }
 
   // 拳で非拘束の敵を殴ったときの接触ペナルティ（5.3）
-  touchCheck(enemy, d) {
-    if (this.climax.isStatusImmune()) return;
+  // gear: 触れたがりの手袋など。着けていると必ず触れてしまう（剣でも）
+  touchCheck(enemy, d, gear = null) {
+    // 余韻中でも、癖は進む
     const { B, p } = this;
     const hs = this.hs;
     const hero = this.exp.hero;
     const attr = this.attrOf(enemy.speciesId);
     const chance = B.weapons.fist.touchChance + touchChanceAddFor(enemy.speciesId, attr, B, p.softnessOverrides);
-    if (Math.random() >= chance) return;
+    if (!gear && Math.random() >= chance) return;
+    if (gear) this.gearTouchFx(enemy, attr, d, gear);
 
     const kind = Math.floor(Math.random() * 3);
     let effect;
@@ -387,6 +406,24 @@ export class Combat extends Emitter {
     this.emit('persist');
   }
 
+  // 触れたがりの手袋：攻撃の手が、そのまま敵のチャームポイントへ吸い寄せられる
+  gearTouchFx(enemy, attr, d, gear) {
+    const th = this.theme(enemy);
+    const b = this.body(enemy);
+    const hy = this.head(enemy).y;
+    const y = { mouth: hy + 6, hand: b.y + 4, bust: b.y - 16, hip: b.y + 14, foot: b.y + 36 }[attr] ?? b.y;
+    const label = ATTRS[attr]?.label ?? '';
+    this.fx({ type: 'swirl', delay: d + 0.08, x: b.x, y, shapes: ['heart', 'heartLine'], colors: [th.main, th.glow, '#ffd6ec'], count: 12, r0: 50, r1: 6, turns: 1.1, life: 0.6, size: [4, 7], glow: true });
+    this.fx({ type: 'ring', delay: d + 0.12, x: b.x, y, r: 34, squash: 0.7, color: th.main, width: 4, alpha: 0.8, life: 0.45 });
+    this.fx({ type: 'callout', delay: d + 0.15, x: b.x, y: hy - 46, text: `（${label}に、手が勝手に……♡）`, color: th.main, size: 18, life: 1.3 });
+    this.emit('se', { id: 'heartPop', tx: enemy.tx, ty: enemy.ty, delay: d + 0.12 });
+    const lines = TOUCH_GEAR_LINES[attr] ?? TOUCH_GEAR_LINES.bust;
+    this.later(d + 0.35, () => {
+      if (this.exp.units.includes(enemy)) this.speak(enemy, lines[Math.floor(Math.random() * lines.length)]);
+    });
+    this.emit('log', 'gearTouch', { name: enemy.name, item: gear.name, attr: label });
+  }
+
   requestFlashback(kind, enemy, attr, skillId = null) {
     this.flashback.request({
       kind,
@@ -413,7 +450,7 @@ export class Combat extends Emitter {
     this.emit('log', 'enemyDown', { name: enemy.name, exp });
     this.exp.removeUnit(enemy);
 
-    while (hs.exp >= expNeeded(hs.level, B)) {
+    while (hs.level < B.battle.heroLevelMax && hs.exp >= expNeeded(hs.level, B)) {
       hs.exp -= expNeeded(hs.level, B);
       hs.level += 1;
       this.runStats();
@@ -456,6 +493,8 @@ export class Combat extends Emitter {
       this.uniteAttack(e, unitePartner);
       return null;
     }
+    // 隣にいると、ときどきポーチを漁られ、奪ったアイテムをその場で使われる
+    if (dist <= 1 && !this.bound && !bindImmediately && Math.random() < B.itemSnatch.chance && this.eco.snatchAndUse(e)) return null;
 
     if (dist <= 1) {
       const normalSkill = def.normalSkill ?? 'normalAttack';
@@ -644,6 +683,7 @@ export class Combat extends Emitter {
     };
     this.addBoundBinder(e, skillId, false);
     recordSkillSeen(this.p, e.speciesId, skillId);
+    this.bound.surrenderRate = Math.min(1, this.bound.surrenderRate + startSurrenderFor(this.p, e.speciesId, this.B));
     this.bound.requiredClicks = this.getRequiredClicks();
     // 選択肢付きの拘束を受け入れたら、その敵の蓄積デバフが進む
     const bindDef = SKILL_DEFS[skillId];
@@ -671,6 +711,8 @@ export class Combat extends Emitter {
     const ratio = bound.requiredClicks ? bound.escapeProgress / bound.requiredClicks : 0;
     const attr = skill.attr ?? this.attrOf(e.speciesId);
     bound.binders.push({ unit: e, skillId, attr });
+    // 拘束攻撃を受けるたびに、その子専用の蓄積デバフ（→ 永続段階）が進む
+    this.bindCondGain(e, skillId, this.B.conditioning.bindHitGain);
     e.setDir(this.exp.hero.tx - e.tx, this.exp.hero.ty - e.ty);
     this.emit('anim', { unit: e, tag: bindTag(this.exp.hero.tx - e.tx, this.exp.hero.ty - e.ty) });
     if (pushBack) {
@@ -818,7 +860,15 @@ export class Combat extends Emitter {
     return ok;
   }
 
-  // ---- ユナイト攻撃（絆を結んだ二人の連携）----
+  // ---- ユナイト攻撃（二人の連携）----
+  // 種類：同じまとまり（enemyGroups.js）の二人はそのまとまりの専用技、それ以外はこすり合わせた部位の技
+  uniteType(a, b) {
+    return uniteTypeFor(a, b, (x, y) => {
+      const g = sharedGroup(x, y);
+      return g ? ENEMY_GROUPS[g] : null;
+    });
+  }
+
   // 二人の見せ場の演出。bindJoin = 拘束中に相方が加わったとき
   uniteFlourish(a, b, bindJoin = false) {
     const hero = this.exp.hero;
@@ -826,8 +876,9 @@ export class Combat extends Emitter {
     const hy = this.head(hero).y;
     const ta = this.theme(a);
     const tb = this.theme(b);
-    const name = uniteNameOf(a.bondAttrs ?? rubAttrsOf(a.speciesId, b.speciesId));
-    this.emit('skillName', { key: `unite:${a.id}:${b.id}`, title: `ユナイト：${name}`, sub: `${a.name} × ${b.name}`, attr: (a.bondAttrs ?? [])[0], color: ta.main, holdSec: 1.2 });
+    const type = this.uniteType(a, b);
+    const name = type.name;
+    this.emit('skillName', { key: `unite:${a.id}:${b.id}`, title: `ユナイト：${name}`, sub: `${a.name} × ${b.name}${type.group ? `（${type.group}）` : ''}`, attr: (a.bondAttrs ?? [])[0], color: ta.main, holdSec: 1.4 });
     this.emit('se', { id: 'uniteStrike', tx: a.tx, ty: a.ty });
     for (const [u, th] of [[a, ta], [b, tb]]) {
       const ub = this.body(u);
@@ -840,40 +891,45 @@ export class Combat extends Emitter {
     this.fx({ type: 'flash', delay: 0.45, color: ta.main, alpha: 0.35 });
     this.fx({ type: 'shake', delay: 0.45, power: 1.1 });
     this.fx({ type: 'callout', delay: 0.1, x: hb.x, y: hy - 90, text: 'せーのっ♡', color: tb.main, size: 30, wobble: 0.1, life: 1.2 });
-    this.fx({ type: 'callout', delay: 0.5, x: hb.x, y: hy - 50, text: bindJoin ? 'ユナイト拘束♡' : `${name}♡`, color: ta.main, size: 34, wobble: 0.08, life: 1.6 });
+    this.fx({ type: 'callout', delay: 0.5, x: hb.x, y: hy - 50, text: bindJoin ? 'ユナイト拘束♡' : `${name}♡`, color: ta.main, size: 32, wobble: 0.08, life: 1.6 });
+    if (type.line) this.fx({ type: 'callout', delay: 0.9, x: hb.x, y: hy - 130, text: type.line, color: tb.glow, size: 20, life: 2.0 });
     this.emit('drainPulse', { strength: 1, delay: 0.45 });
+    return type;
   }
 
-  // 二人同時の攻撃：大きく吸い、二人ぶんの蓄積デバフを進め、そのまま二人がかりで拘束する
+  // 二人同時の攻撃：大きく吸い、二人ぶんの蓄積デバフを進め、種類ごとの効果のあと、二人がかりで拘束する
   uniteAttack(a, b) {
     const { B, hs } = this;
     const U = B.unite;
     this.actedThisTurn = true;
     a.uniteReadyTurn = this.exp.turnCount + U.cooldownTurns;
     b.uniteReadyTurn = a.uniteReadyTurn;
-    this.uniteFlourish(a, b);
-    this.emit('log', 'uniteAttack', { a: a.name, b: b.name, skill: uniteNameOf(a.bondAttrs ?? rubAttrsOf(a.speciesId, b.speciesId)) });
+    const type = this.uniteFlourish(a, b);
+    this.emit('log', 'uniteAttack', { a: a.name, b: b.name, skill: type.name });
+    const E = U.effects[type.effect] ?? {};
     this.later(0.55, () => {
       if (this.defeated) return;
       const scale = this.climax.drainScale() * this.buffs.mult('drainTaken') * this.conditions.mult('drainTaken')
-        * (a.bondPower ?? 1) * (b.bondPower ?? 1);
-      const mp = Math.min(hs.mp, Math.round(hs.maxMp * U.mpRate * scale));
+        * (a.bondPower ?? 1) * (b.bondPower ?? 1) * (a.bondPartner === b ? 1 : U.groupPowerMul);
+      const mp = Math.min(hs.mp, Math.round(hs.maxMp * U.mpRate * (E.mp ?? 1) * scale));
       hs.mp -= mp;
-      const res = this.drainHeroExp(U.expRate * scale);
+      const res = this.drainHeroExp(U.expRate * (E.exp ?? 1) * scale);
       const hb = this.body(this.exp.hero);
       const hy = this.head(this.exp.hero).y;
       if (mp > 0) this.fx({ type: 'damage', x: hb.x, y: hy - 26, text: `MP -${mp}`, style: 'mp', big: true });
       if (res.lost > 0) this.fx({ type: 'damage', x: hb.x, y: hy - 56, text: `EXP -${res.lost}`, style: 'exp', big: true });
       for (const u of [a, b]) {
         this.gainDrainExperience(u, (mp + res.lost) / 2);
-        const condId = Object.keys(CONDITIONS).find((id) => CONDITIONS[id].source === u.speciesId);
-        if (condId) this.handleEvents(this.conditions.gain(condId, U.condGain, { floorKey: this.floorKey() }), u, null);
+        const condId = conditionOfRace(u.speciesId);
+        if (condId) this.handleEvents(this.conditions.gain(condId, U.condGain * (E.cond ?? 1), { floorKey: this.floorKey() }), u, null);
       }
+      this.uniteEffect(type, a, b);
       if (hs.mp === 0) this.emit('log', 'mpEmpty', {});
       this.emit('persist');
     });
+    if (E.noBind) return;
     // 続けて、二人がかりで拘束する
-    this.later(1.2, () => {
+    this.later(E.bindDelay ?? 1.2, () => {
       if (this.defeated || this.bound || this.climax.blocksBinding()) return;
       if (!this.exp.units.includes(a) || !this.exp.units.includes(b)) return;
       const bindA = ENEMIES_BY_ID[a.speciesId]?.bindSkills.find((id) => SKILL_DEFS[id]);
@@ -881,26 +937,219 @@ export class Combat extends Emitter {
       if (!bindA || !bindB) return;
       const hero = this.exp.hero;
       if (chebyshev(b.tx, b.ty, hero.tx, hero.ty) > 1) this.exp.stepToward?.(b);
-      this.startBound(a, bindA, true, { answer: 'unite', drainMul: U.bindDrainMul });
+      this.startBound(a, bindA, true, { answer: 'unite', drainMul: U.bindDrainMul * (E.bindDrain ?? 1) });
       if (!this.bound) return;
       this.bound.binders[0].unite = true;
+      this.bound.surrenderRate = Math.min(1, this.bound.surrenderRate + (E.surrender ?? 0));
       if (chebyshev(b.tx, b.ty, hero.tx, hero.ty) <= 1 && this.addBoundBinder(b, bindB)) {
         const me = this.bound.binders.find((x) => x.unit === b);
         if (me) me.unite = true;
       }
+      this.refreshBoundRequirement();
     });
   }
 
-  // この敵が、いまユナイト攻撃できる相方
+  // 連携攻撃の種類ごとの追加効果
+  uniteEffect(type, a, b) {
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    const hy = this.head(hero).y;
+    const ta = this.theme(a);
+    const add = (id, turns) => this.handleEvents(this.conditions.addStatus(id, turns), a, null);
+    switch (type.effect) {
+      case 'chorus':   // メイド隊：呼び鈴で仲間が集まり、声をそろえる
+        this.callMaids(a);
+        this.emit('se', { id: 'maidChorus', clear: true });
+        add('exhausted', 3);
+        break;
+      case 'rush':     // バニーズ：左右から飛び込み、転ばせる
+        add('tripped', 1);
+        this.fx({ type: 'speedLines', x: hb.x, y: hb.y, color: ta.main, count: 70, alpha: 0.6 });
+        break;
+      case 'whisper':  // 小悪魔：左右の耳から囁き。音がこもり、集中が切れる
+        add('unfocused', 4);
+        this.emit('uniteWhisper', { sec: 3 });
+        this.fx({ type: 'callout', x: hb.x - 110, y: hy - 10, text: 'びゅー……♡', color: ta.main, size: 22, life: 1.8 });
+        this.fx({ type: 'callout', delay: 0.3, x: hb.x + 110, y: hy - 10, text: 'だしちゃえだしちゃえ……♡', color: this.theme(b).main, size: 20, life: 1.8 });
+        this.fx({ type: 'wash', color: ta.main, alpha: 0.3, mode: 'edge', life: 2.4 });
+        break;
+      case 'doubleDrain':   // サキュバス：二重の吸精（経験値を大きく）
+        this.fx({ type: 'swirl', x: hb.x, y: hy, shapes: ['dot', 'heart'], colors: ['#c08bff', ta.main], count: 30, r0: 120, r1: 10, turns: 2, life: 1.4, size: [4, 8], glow: true });
+        break;
+      case 'judgment':      // シスター：二人のカウントダウン
+        ['ご', 'よん', 'さん', 'に', 'いち', 'ぜろ。'].forEach((t, i) => this.fx({ type: 'callout', delay: i * 0.3, x: hb.x, y: hy - 40, text: t, color: ta.main, size: 54, life: 0.32, wobble: 0 }));
+        this.emit('se', { id: 'zeroDrop', delay: 1.6 });
+        add('cowed', 3);
+        break;
+      case 'command':       // 高貴な二人：二重命令で服従
+        add('obedient', 4);
+        break;
+      case 'capture':       // 追跡者：逃げ場を塞ぐ
+        add('cornered', 4);
+        break;
+      case 'lullaby':       // 甘やかし：とろとろに寝かしつける
+        add('asleep', 1);
+        this.fx({ type: 'burst', x: hb.x, y: hy, shapes: ['note', 'fluff'], colors: [ta.main, '#ffffff'], count: 14, speed: [20, 60], size: [6, 10], life: 1.4, gravity: -30 });
+        break;
+      case 'gaze':          // 視線包囲：視線ロックが一気に溜まる
+        this.save.currentRun.gazeLock = this.B.traits.gazeMax - 1;
+        add('pinned', 1);
+        break;
+      default:
+        if (type.status) add(type.status, 2);
+    }
+  }
+
+  // ---- 離れた所からの誘惑を受け入れた ----
+  // 技の始まり：ハートの光がまっすぐ届き、目がハートになる
+  rangedAcceptIntro(e, timeout) {
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    const hy = this.head(hero).y;
+    const th = this.theme(e);
+    const eh = this.head(e);
+    this.fx({ type: 'wash', color: th.main, alpha: 0.38, mode: 'full', life: 1.8, inSec: 0.2 });
+    this.fx({ type: 'wash', color: '#ff2d86', alpha: 0.3, mode: 'edge', life: 2.6, inSec: 0.3 });
+    this.fx({ type: 'flow', from: { x: eh.x, y: eh.y + 24 }, to: { x: hb.x, y: hy + 6 }, shapes: ['heart', 'heart', 'heartLine'],
+      colors: [th.main, th.glow, '#ffd6ec'], count: 40, life: 0.7, spanSec: 1.2, arc: 20, size: [6, 12], glow: true });
+    this.fx({ type: 'speedLines', delay: 0.2, x: hb.x, y: hb.y, color: th.main, count: 60, alpha: 0.5 });
+    this.fx({ type: 'swirl', delay: 0.5, x: hb.x, y: hy + 4, shapes: ['heart'], colors: [th.main, '#ff2d86'], count: 12, r0: 50, r1: 10, turns: 2, life: 1.2, size: [5, 9], glow: true });
+    this.fx({ type: 'glyph', delay: 0.3, x: hb.x, y: hb.y + 42, style: 'heart', color: th.main, sub: th.glow, r: 70, life: 2.2, spin: 1.5 });
+    this.fx({ type: 'callout', delay: 0.4, x: hb.x, y: hy - 80, text: timeout ? '（目が……離せない……♡）' : '（あの子のところへ……行かなきゃ♡）', color: th.main, size: 26, life: 2.2, rise: 10 });
+    this.fx({ type: 'callout', delay: 0.9, x: eh.x, y: eh.y - 40, text: 'おいで……♡', color: th.glow, size: 30, wobble: 0.1, life: 1.8 });
+    this.emit('se', { id: 'temptAccept', tx: e.tx, ty: e.ty, gain: 1.2 });
+    this.emit('se', { id: 'lowMpHeartbeat', delay: 0.3, gain: 1.0 });
+    this.emit('se', { id: 'lowMpHeartbeat', delay: 0.9, gain: 1.1 });
+    this.emit('drainPulse', { strength: 1, delay: 0.4 });
+    this.emit('log', 'rangedAccept', { name: e.name });
+  }
+
+  // 技のあと：一歩ずつ、あの子の胸の中へ歩いていき、そのまま抱きとめられて拘束される
+  rangedAcceptFollow(e, timeout) {
+    const RA = this.B.temptation.rangedAccept;
+    const hero = this.exp.hero;
+    if (this.bound || !this.exp.units.includes(e)) return;
+    const path = this.pathToNeighbor(hero, e);
+    this.rangedPull = true;
+    const th = this.theme(e);
+    path.forEach((cell, i) => {
+      this.later(RA.stepSec * (i + 1), () => {
+        if (this.bound || this.defeated) return;
+        hero.moveTo(cell.x, cell.y);
+        hero.setDir(e.tx - hero.tx, e.ty - hero.ty);
+        this.exp.refresh?.();
+        this.emit('heroPulled', { unit: hero });
+        const hb = this.body(hero);
+        this.fx({ type: 'burst', x: hb.x, y: hb.y + 30, shapes: ['heart'], colors: [th.main, '#ffd6ec'], count: 5, speed: [20, 60], size: [4, 7], life: 0.8, gravity: -50 });
+      });
+    });
+    this.later(RA.stepSec * (path.length + 1) + 0.15, () => {
+      this.rangedPull = false;
+      if (this.bound || this.defeated || !this.exp.units.includes(e)) return;
+      if (chebyshev(e.tx, e.ty, hero.tx, hero.ty) > 1) return;
+      const bindId = ENEMIES_BY_ID[e.speciesId]?.bindSkills.find((id) => SKILL_DEFS[id]);
+      if (!bindId) return;
+      const hb = this.body(hero);
+      this.speak(e, timeout ? 'ずっと見とれてたね♡ ……ほら、つかまえた' : '自分から来てくれたんだ♡ ……ぎゅーっ♡');
+      this.fx({ type: 'callout', x: hb.x, y: this.head(hero).y - 70, text: '自分から、飛び込んだ……♡', color: th.main, size: 30, wobble: 0.08, life: 1.8 });
+      this.fx({ type: 'burst', x: hb.x, y: hb.y - 10, shapes: ['heart', 'heart', 'heartLine'], colors: [th.main, th.glow, '#ff2d86'], count: 30, speed: [120, 300], size: [7, 13], life: 1.0, glow: true });
+      this.fx({ type: 'flash', color: th.main, alpha: 0.35 });
+      this.startBound(e, bindId, true, { answer: 'accept', drainMul: RA.bindDrainMul });
+      if (this.bound) {
+        // 自分から身を任せたので、最初から抜け出しにくい
+        this.bound.surrenderRate = Math.min(1, this.bound.surrenderRate + RA.surrender);
+        this.refreshBoundRequirement();
+      }
+    });
+  }
+
+  // 主人公から、敵の隣の空いたマスまでの道（歩く順）。見つからなければ空
+  pathToNeighbor(hero, e) {
+    const walk = (x, y) => this.exp.walk(x, y) && (!this.exp.unitAt(x, y) || this.exp.unitAt(x, y) === hero);
+    const key = (x, y) => `${x},${y}`;
+    const start = key(hero.tx, hero.ty);
+    const prev = new Map([[start, null]]);
+    const queue = [{ x: hero.tx, y: hero.ty }];
+    while (queue.length && prev.size < 4000) {
+      const cur = queue.shift();
+      if (chebyshev(cur.x, cur.y, e.tx, e.ty) === 1 && key(cur.x, cur.y) !== start) {
+        const path = [];
+        for (let c = cur; c && key(c.x, c.y) !== start; c = prev.get(key(c.x, c.y))) path.unshift(c);
+        return path.slice(0, this.B.temptation.rangedAccept.maxSteps);
+      }
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const nx = cur.x + dx;
+        const ny = cur.y + dy;
+        if (prev.has(key(nx, ny)) || !walk(nx, ny) || !canStep(walk, cur.x, cur.y, dx, dy)) continue;
+        prev.set(key(nx, ny), cur);
+        queue.push({ x: nx, y: ny });
+      }
+    }
+    return [];
+  }
+
+  // ---- 追加18体の専用の仕組み ----
+  // 選択肢付き技を受け入れた（applySkillEffects から）
+  onTemptAccepted(e, def, flags) {
+    // 自分から受け入れると、その子が成長する（ご褒美の罠・過保護の罠・甘えのおねだり）
+    if (def.acceptGrow && !flags.timeout) {
+      this.gainDrainExperience(e, this.B.memory.acceptGrowExp);
+      this.celebrateEnemy(e, '甘えてくれた♡ 成長');
+      this.emit('log', 'acceptGrow', { name: e.name });
+    }
+    this.rememberYield(e);
+  }
+
+  // お願いを聞いた・抵抗をやめた：カモ認定と諦め学習
+  rememberYield(e) {
+    if (remember(this.p, e.speciesId, 'kamo', this.B)) {
+      this.later(0.4, () => this.speak(e, 'やったぁ♡ ……おにーさん、カモ確定だね'));
+      this.emit('log', 'memoryKamo', { name: e.name });
+    }
+    if (remember(this.p, e.speciesId, 'giveUps', this.B)) this.emit('log', 'memoryGiveUp', { name: e.name });
+  }
+
+  // メイド連携追跡：呼び鈴で、階にいるメイドたちが集まってくる
+  callMaids(caller) {
+    const hero = this.exp.hero;
+    let n = 0;
+    for (const u of this.exp.units) {
+      if (u.kind !== 'enemy' || u === caller || !ENEMIES_BY_ID[u.speciesId]?.maid) continue;
+      if (chebyshev(u.tx, u.ty, hero.tx, hero.ty) > this.B.memory.maidCallRange) continue;
+      u.lured = true;
+      n += 1;
+      const b = this.body(u);
+      this.fx({ type: 'callout', delay: 0.3 + n * 0.15, x: b.x, y: this.head(u).y - 30, text: 'はい、ただいま', color: this.theme(u).main, size: 18 });
+      this.emit('se', { id: 'heelStep', tx: u.tx, ty: u.ty, delay: 0.3 + n * 0.15 });
+    }
+    if (n) this.emit('log', 'maidCall', { name: caller.name, count: n });
+  }
+
+  // メイドが2人以上で拘束していると、声をそろえて吸い上げる
+  maidChorus(bound) {
+    bound.chorusTimer = (bound.chorusTimer ?? 0) - 1;
+    if (bound.chorusTimer > 0) return;
+    bound.chorusTimer = 4;
+    const hero = this.exp.hero;
+    const hb = this.body(hero);
+    this.fx({ type: 'callout', x: hb.x, y: this.head(hero).y - 100, text: '「「経験値、だして……♡」」', color: '#ff7ab8', size: 30, wobble: 0.08, life: 1.6 });
+    this.fx({ type: 'wash', color: '#ffd36b', alpha: 0.18, mode: 'edge', life: 1.2 });
+    this.emit('se', { id: 'maidChorus', clear: true });
+  }
+
+  // この敵が、いまユナイト攻撃できる相方。絆を結んだ相手が最優先、いなければ近くにいる同じまとまりの仲間
   unitePartnerFor(e, dist) {
     const U = this.B.unite;
     if (dist > 1 || this.bound || this.climax.blocksBinding()) return null;
     if ((e.uniteReadyTurn ?? 0) > this.exp.turnCount) return null;
-    const p = partnerReady(e, this.exp.units);
-    if (!p || p.bonding || p.stunTurns > 0) return null;
     const hero = this.exp.hero;
-    if (chebyshev(p.tx, p.ty, hero.tx, hero.ty) > U.partnerRange) return null;
-    return Math.random() < U.chance ? p : null;
+    const ok = (p) => p && p !== e && p.hp > 0 && !p.bonding && !(p.stunTurns > 0) && (p.uniteReadyTurn ?? 0) <= this.exp.turnCount
+      && chebyshev(p.tx, p.ty, hero.tx, hero.ty) <= U.partnerRange;
+    const bonded = partnerReady(e, this.exp.units);
+    if (ok(bonded)) return Math.random() < U.chance ? bonded : null;
+    const mates = this.exp.units.filter((u) => u.kind === 'enemy' && ok(u) && sharedGroup(e.speciesId, u.speciesId));
+    if (!mates.length || Math.random() >= U.groupChance) return null;
+    return mates[Math.floor(Math.random() * mates.length)];
   }
 
   getRequiredClicks() {
@@ -928,7 +1177,9 @@ export class Combat extends Emitter {
     // 一時状態（油断・誘惑受容など）と、発症中の蓄積デバフで脱出しにくくなる
     const condMul = this.conditions.mult('escapeNeed') * this.conditions.boost(first.unit.speciesId, 'escape')
       * (bound.formation?.escape ?? 1)
-      * Math.max(...binders.map((b) => this.eco.escapeMulFrom(b.unit.speciesId)));   // 贈り物の呪い
+      * Math.max(...binders.map((b) => this.eco.escapeMulFrom(b.unit.speciesId)))   // 贈り物の呪い
+      * Math.max(...binders.map((b) => escapeMulFor(this.p, b.unit.speciesId, this.B)))   // 逃げた回数・覚えた逃げ方
+      * escapeMulForBound(this, bound);   // 重圧
     return Math.max(1, Math.round(base * this.buffs.mult('escapeNeed') * condMul));
   }
 
@@ -945,6 +1196,14 @@ export class Combat extends Emitter {
     this.fx({ type: 'ring', x: this.body(this.exp.hero).x, y: this.body(this.exp.hero).y, r: 36 });
     if (bound.escapeProgress >= bound.requiredClicks) this.escapeBound();
     return true;
+  }
+
+  // 拘束で吸われている間も、その子専用の蓄積デバフ（→ 永続段階）が進む
+  bindCondGain(unit, skillId, amount) {
+    if (!(amount > 0)) return;
+    const condId = SKILL_DEFS[skillId]?.cond?.id ?? conditionOfRace(unit.speciesId);
+    if (!condId || !CONDITIONS[condId]) return;
+    this.handleEvents(this.conditions.gain(condId, amount, { floorKey: this.floorKey() }), unit, skillId);
   }
 
   // 主人公のEXPを失う。足りなければレベルが下がる
@@ -993,6 +1252,8 @@ export class Combat extends Emitter {
     for (const { unit } of bound.binders) {
       this.gainDrainExperience(unit, res.lost * B.bound.expShareRate);
     }
+    // 絶頂中は、その子専用の蓄積デバフがいっそう深く刻まれる
+    for (const { unit, skillId } of bound.binders) this.bindCondGain(unit, skillId, B.conditioning.bindGainPerSec * B.conditioning.climaxGainMul);
     const n = bound.binders.length;
     for (const { unit } of bound.binders) {
       this.emit('se', {
@@ -1269,6 +1530,12 @@ export class Combat extends Emitter {
     if (this.climax.isClimax()) return;
     bound.elapsed += 1;
     bound.idleSec += 1;
+    if (tickPressure(this, bound)) this.refreshBoundRequirement();
+    // 拘束中、動けないうちにポーチを漁られる
+    if (Math.random() < this.B.itemSnatch.bindChancePerSec) {
+      const binder = bound.binders?.[Math.floor(Math.random() * bound.binders.length)]?.unit;
+      if (binder) this.eco.snatchAndUse(binder);
+    }
     if (bound.idleSec >= this.B.bound.idleSurrenderSec) {
       bound.surrenderRate = Math.min(1, bound.surrenderRate + this.B.bound.surrenderPerIdleSec);
       this.refreshBoundRequirement();
@@ -1303,6 +1570,8 @@ export class Combat extends Emitter {
       B
     );
     const avg = (fn) => bound.binders.reduce((sum, b) => sum + fn(b), 0) / bound.binders.length;
+    const maids = bound.binders.filter((b) => ENEMIES_BY_ID[b.unit.speciesId]?.maid).length;
+    if (maids >= 2) this.maidChorus(bound);
     const drainMul = avg((b) => {
       const ability = getAbilityLevel(this.p, b.unit.speciesId, drainAbilityId(b.attr));
       const lose = this.p.debuffs.loseHabit.byRace[b.unit.speciesId] ?? 0;
@@ -1312,7 +1581,10 @@ export class Combat extends Emitter {
       const u = b.unit;
       const bond = (u.bondPower ?? 1) * ((u.bondSkillAttrs ?? []).includes(b.attr) ? (u.bondSkillMul ?? 1) : 1)
         * (b.unite ? B.unite.bindDrainMul : 1)
-        * this.eco.drainMulFrom(u.speciesId);   // 贈り物の呪い・貢いだ額
+        * this.eco.drainMulFrom(u.speciesId)   // 贈り物の呪い・貢いだ額
+        * drainMulFor(this.p, u.speciesId, B)   // カモ認定
+        * bindDrainMulFor(this, b, bound)   // 丁寧な収奪・重圧
+        * (maids >= 2 && ENEMIES_BY_ID[u.speciesId]?.maid ? B.memory.maidChorusMul : 1);   // メイドの合唱
       return (1 + B.battle.drainPerLevel * ability) * (1 + lose * B.habit.loseMpPerStage) * evolved * cond * formation * bond;
     });
     const resistance = Math.min(...bound.binders.map((b) => this.eco.resistanceOf(b.attr)));
@@ -1327,11 +1599,12 @@ export class Combat extends Emitter {
     const amount = Math.min(hs.mp, Math.max(1, Math.round(B.bound.mpPerSec * durationSec * mul * scale * choiceMul)));
     hs.mp -= amount;
     this.eco.wearGear(bound.binders);   // その部位の装備が溶かされていく
-    const expMul = avg((b) => SKILL_DEFS[b.skillId]?.bindExpMul ?? 1);
+    const expMul = avg((b) => (SKILL_DEFS[b.skillId]?.bindExpMul ?? 1) * bindExpMulFor(this, b, bound));
     this.drainHeroExp(B.bound.expDrainPerSec * durationSec * mul * scale * choiceMul * expMul);
     for (const binder of bound.binders) {
       const { unit, attr, skillId } = binder;
       this.gainDrainExperience(unit, amount * B.bound.expShareRate);
+      this.bindCondGain(unit, skillId, B.conditioning.bindGainPerSec * durationSec);
       const abilityId = drainAbilityId(attr);
       if (abilityId) this.abilityEvents(addAbilityProgress(this.p, unit.speciesId, abilityId, B, {
         pts: 1, grownThisBattle: this.grown
@@ -1374,7 +1647,7 @@ export class Combat extends Emitter {
     if (this.climax.isClimax() || this.hs.mp <= 0) return;
     bound.requestTimer = (bound.requestTimer ?? R.firstSec) - dtSec;
     if (bound.requestTimer > 0) return;
-    bound.requestTimer = R.everySec;
+    bound.requestTimer = R.everySec * (bound.binders.some((b) => this.p.enemyMemory?.[b.unit.speciesId]?.kamo) ? this.B.memory.kamoRequestMul : 1);
     const unit = bound.binders[Math.floor(Math.random() * bound.binders.length)].unit;
     bound.request = { unit, line: sceneLineFor(unit.speciesId, 'request'), age: 0, timeoutSec: R.timeoutSec };
     this.speak(unit, bound.request.line, { bubble: false });
@@ -1418,6 +1691,7 @@ export class Combat extends Emitter {
     this.p.stats.requestAcceptCount = (this.p.stats.requestAcceptCount ?? 0) + 1;
     this.speak(u, sceneLineFor(u.speciesId, 'requestAccept'));
     this.emit('log', answer === 'timeout' ? 'bindRequestTimeout' : 'bindRequestAccepted', { name: u.name });
+    this.rememberYield(u);
     const binderAttr = bound.binders.find((b) => b.unit === u)?.attr ?? this.attrOf(u.speciesId);
     this.eco.rollGift(u, binderAttr, 'request');
     this.emit('se', { id: 'temptAccept' });
@@ -1488,6 +1762,15 @@ export class Combat extends Emitter {
     }
     if (!byClimax) {
       this.hs.mp = Math.min(this.hs.maxMp, this.hs.mp + this.B.bound.escapeRecoverMp);
+    }
+    if (!byClimax) {
+      for (const { unit } of bound.binders) {
+        const key = unit.speciesId === 'yandereGirl' ? 'escapes' : unit.speciesId === 'jiangshiGirl' ? 'learn' : null;
+        if (key && remember(this.p, unit.speciesId, key, this.B)) {
+          this.later(0.3, () => this.speak(unit, key === 'escapes' ? '……逃げたね。覚えたよ' : 'その逃げ方、おぼえちゃった♡'));
+          this.emit('log', key === 'escapes' ? 'memoryEscape' : 'memoryLearn', { name: unit.name });
+        }
+      }
     }
     this.escapeInvulnTurns = 1;
     this.bound = null;
@@ -1581,6 +1864,7 @@ export class Combat extends Emitter {
     }
     const { e, skillId, def, attr, ctx, skillName, windupOnly } = perf.payload;
     const { stage } = perf;
+    if (!windupOnly && perf.payload.flags?.rangedAccept) this.rangedAcceptIntro(e, perf.payload.flags.timeout);
     if (!windupOnly) {
       const hero = this.exp.hero;
       const motion = def.category === 'attack'
@@ -1738,7 +2022,9 @@ export class Combat extends Emitter {
         hpLoss: total.hp, mpLoss: total.mp, expLost: total.exp
       });
       if (!pl.blocked && !this.defeated) this.applySkillEffects(pl);
+      if (pl.flags?.rangedAccept && !this.defeated) this.rangedAcceptFollow(e, pl.flags.timeout);
       if (!pl.blocked && !pl.flags?.gentle && !this.defeated) this.eco.steal(e, pl.skillId);
+      if (!pl.blocked && !pl.flags?.gentle && !this.defeated) onLand(this, pl);
     }
     this.emit('persist');
   }
@@ -1747,13 +2033,14 @@ export class Combat extends Emitter {
   applySkillEffects(pl) {
     const { B } = this;
     const { e, skillId, def, flags = {} } = pl;
-    if (this.climax.isStatusImmune()) return;
+    // 余韻中でも、蓄積デバフ・一時状態は進む
     const guarded = flags.resisted && def.resist === 'guard';
     if (def.cond && !guarded) {
       let gain = def.cond.gain;
       if (flags.timeout) gain *= B.temptation.timeoutCondMul;
       else if (flags.accepted) gain *= B.temptation.acceptCondMul;
       if (flags.evolved) gain *= B.skillEvolution.condMul;
+      if (flags.rangedAccept) gain *= B.temptation.rangedAccept.condMul;
       this.handleEvents(this.conditions.gain(def.cond.id, gain, {
         floorKey: this.floorKey(),
         voluntary: flags.accepted && !flags.timeout
@@ -1793,12 +2080,14 @@ export class Combat extends Emitter {
       const bindId = ENEMIES_BY_ID[e.speciesId]?.bindSkills?.[0];
       if (bindId) this.startBound(e, bindId, true, { answer: 'charge', drainMul: 1 });
     }
+    if (def.maidCall) this.callMaids(e);
     // 印を付けた種族の敵は、どこにいても追ってくる
     if (def.lure && !guarded) {
       for (const u of this.exp.units) if (u.kind === 'enemy' && u.speciesId === e.speciesId) u.lured = true;
     }
     if (flags.accepted || flags.contestLose) {
       this.handleEvents(recordEvoProgress(this.p, e.speciesId, skillId, def, 'choice_count'), e, skillId);
+      this.onTemptAccepted(e, def, flags);
     }
   }
 
@@ -1926,7 +2215,7 @@ export class Combat extends Emitter {
     this.fx({ type: 'callout', x: hb.x, y: this.head(hero).y - 30, text: 'ひっかかった♡', color: trap.color, size: 30, wobble: 0.12 });
     this.fx({ type: 'shake', power: 0.6 });
     this.emit('anim', { unit: hero, tag: 'hit' });
-    if (this.climax.isStatusImmune()) return;
+
     this.handleEvents(this.conditions.gain('trapHabit', T.condGain, { floorKey: this.floorKey() }), owner, 'footTrap');
     this.handleEvents(this.conditions.addStatus('offBalance', 2), owner, 'footTrap');
     this.handleEvents(this.conditions.addStatus('tripped', 1), owner, 'footTrap');
@@ -2097,7 +2386,7 @@ export class Combat extends Emitter {
     } else if (def.resist === 'guard' && flags.resisted) {
       this.guarding = true;   // 身構える：この技の被害を減らし、追加効果を防ぐ
     } else if (def.category === 'special' && !flags.accepted) {
-      const bonus = flags.resisted && def.resist === 'dodge' ? B.temptation.resistEvadeBonus : 0;
+      const bonus = flags.resisted && def.resist === 'dodge' ? B.temptation.resistEvadeBonus * resistBonusMulFor(this, e) : 0;
       if (Math.random() < this.evadeChance(nums, bonus)) {
         this.missSkill(e, skillId, flags.resisted);
         return;
@@ -2108,10 +2397,14 @@ export class Combat extends Emitter {
     if (FLASHBACK_STRONG.has(skillId)) this.requestFlashback('strong', e, attr, skillId);
     else if (skillId === ctx?.rememberedSkillId) this.requestFlashback('rematch', e, attr, skillId);
 
+    // 離れた所からの誘惑を受け入れた：自分から、あの子の胸の中へ歩いていく
+    const RA = B.temptation.rangedAccept;
+    flags.rangedAccept = Boolean(flags.accepted && def.category === 'special' && !def.pull && !def.chargeBind
+      && chebyshev(e.tx, e.ty, this.exp.hero.tx, this.exp.hero.ty) > 1);
     // にじり寄る技：主人公の隣まで一気に詰める
     if (def.pull || def.chargeBind) this.pullToward(e, def.chargeBind);
     // 最初は無害な技：蓄積デバフが発症するか、技が進化するまでは被害を出さない
-    flags.gentle = Boolean(def.gentle && !flags.evolved
+    flags.gentle = Boolean(def.gentle && !flags.evolved && !flags.rangedAccept
       && (!def.cond || this.conditions.value(def.cond.id) < B.conditioning.onsetAt));
     flags.countdown = Boolean(def.countdown);
     const heroBack = this.exp.hero.dir;
@@ -2123,7 +2416,9 @@ export class Combat extends Emitter {
       const loseMp = (p.debuffs.loseHabit.byRace[e.speciesId] ?? 0) * B.habit.loseMpPerStage;
       const soft = softnessEffects(getSoftness(e.speciesId, attr, B, p.softnessOverrides), B).drainMul;
       mpMul = Math.min(B.bound.absorbCap, (1 + B.battle.drainPerLevel * drainLv) * (1 + loseMp) * soft);
-      mpMul *= this.conditions.boost(e.speciesId, 'drain') * this.eco.drainMulFrom(e.speciesId);
+      mpMul *= this.conditions.boost(e.speciesId, 'drain') * this.eco.drainMulFrom(e.speciesId) * drainMulFor(p, e.speciesId, B);
+      // 一度負けた相手ほど溶かされる（甘やかしバニーの敗北依存）
+      if (nums.loseHabitBonus) mpMul *= 1 + nums.loseHabitBonus * (p.debuffs.loseHabit.byRace[e.speciesId] ?? 0);
       if (flags.careless && nums.carelessBonus) mpMul *= nums.carelessBonus;
       if (flags.backstab && nums.backBonus) mpMul *= nums.backBonus;
       if (nums.bonusWhen && this.conditions.has(nums.bonusWhen.status)) {
@@ -2133,7 +2428,8 @@ export class Combat extends Emitter {
     }
     // 敵どうしの絆で強くなった技（能力上昇・こすり合わせた部位の技の強化）
     const bondMul = (e.bondPower ?? 1) * ((e.bondSkillAttrs ?? []).includes(attr) ? (e.bondSkillMul ?? 1) : 1);
-    const powerMul = (flags.evolved ? B.skillEvolution.powerMul : 1) * bondMul;
+    const powerMul = (flags.evolved ? B.skillEvolution.powerMul : 1) * bondMul * (flags.rangedAccept ? RA.drainMul : 1)
+      * powerMulFor(this, e, skillId, nums);   // 自信成長・吸収進化・弱点学習・視線ロック
     mpMul *= powerMul;
     let stage = normalizeStage(SKILL_STAGES[skillId], def.category, B.stage);
     if (ctx?.preFlashed) stage = { ...stage, flashSec: 0 };

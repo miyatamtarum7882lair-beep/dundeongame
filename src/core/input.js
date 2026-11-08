@@ -27,6 +27,7 @@ export class Input {
     this.onBlur = this.onBlur.bind(this);
     this.onPointerMove = this.onPointerMove.bind(this);
     this.onPointerDown = this.onPointerDown.bind(this);
+    this.onContextMenu = (e) => { if (!isTypingTarget(e.target)) e.preventDefault(); };
   }
 
   // bindings: { アクション名: [キーコード, ...] }
@@ -54,6 +55,7 @@ export class Input {
     this.target.addEventListener('blur', this.onBlur);
     this.target.addEventListener('pointermove', this.onPointerMove);
     this.target.addEventListener('pointerdown', this.onPointerDown);
+    this.target.addEventListener('contextmenu', this.onContextMenu);
     this.attached = true;
   }
 
@@ -95,9 +97,19 @@ export class Input {
     const p = this.mapPointer(e.clientX, e.clientY);
     this.pointer.x = p.x;
     this.pointer.y = p.y;
+    // ゲーム画面（キャンバス）の上にいるか。メニューなどの上では見つめない
+    this.pointer.overCanvas = typeof HTMLCanvasElement !== 'undefined' && e.target instanceof HTMLCanvasElement;
   }
 
   onPointerDown(e) {
+    // ゲーム画面（キャンバス）を押したときだけ。メニュー・ボタンなど DOM の上は別扱い
+    if (typeof HTMLCanvasElement !== 'undefined' && !(e.target instanceof HTMLCanvasElement)) return;
+    if (e.button === 2) {
+      // 右クリック：その方向を向く（ターンは進まない）
+      const q = this.mapPointer(e.clientX, e.clientY);
+      this.queue.push({ action: 'look', shift: false, repeat: false, source: 'pointer', x: q.x, y: q.y });
+      return;
+    }
     if (e.button !== 0) return;
     const p = this.mapPointer(e.clientX, e.clientY);
     this.pointer.x = p.x;

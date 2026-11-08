@@ -243,6 +243,22 @@ export const LOG_KINDS = {
     mark: '◇', color: 'white', importance: 'minor', se: 'tick',
     text: '{weapon}に持ちかえた'
   },
+  itemSnatched: {
+    mark: '▼', color: 'pink', importance: 'major', se: null,
+    text: '{name}に{item}を奪われた！'
+  },
+  itemSnatchUsed: {
+    mark: '♥', color: 'pink', importance: 'major', se: null,
+    text: '{name}：{text}'
+  },
+  gazeLocked: {
+    mark: '♥', color: 'pink', importance: 'minor', se: null,
+    text: '{name}から、目が離せない……'
+  },
+  gearTouch: {
+    mark: '♥', color: 'pink', importance: 'minor', se: null,
+    text: '{item}のせいで、{name}の{attr}に手が吸い寄せられた……'
+  },
   touchPenalty: {
     mark: '▼', color: 'purple', importance: 'minor', se: 'debuffDown',
     text: '{name}に触れてしまった…（{effect}）'
@@ -267,6 +283,74 @@ export const LOG_KINDS = {
     mark: '■', color: 'red', importance: 'major', se: 'debuffDown',
     text: '主人公は倒れた…（{name}の{skill}）'
   },
+  idolConfidence: {
+    mark: '▲', color: 'gold', importance: 'minor', se: null,
+    text: '{name}は自信をつけた…（★{stage}）'
+  },
+  absorbEvolve: {
+    mark: '▲', color: 'gold', importance: 'major', se: 'enemyGrow',
+    text: '{name}の吸い方がうまくなった…（吸収進化 {stage}段）'
+  },
+  weakLearn: {
+    mark: '♥', color: 'purple', importance: 'major', se: null,
+    text: '{name}は、盗めた弱点を覚えた…（{count}つ）'
+  },
+  charmChain: {
+    mark: '▼', color: 'pink', importance: 'major', se: null,
+    text: '{name}の魅了が連鎖した…（集中力低下・脱力・魔力漏出）'
+  },
+  gazeReset: {
+    mark: '◇', color: 'white', importance: 'minor', se: null,
+    text: '目を逸らして、視線ロックが解けた'
+  },
+  gazeLockMax: {
+    mark: '!', color: 'pink', importance: 'major', se: null,
+    text: '{name}から目が離せない……動けない！'
+  },
+  memoryFaceAway: {
+    mark: '♥', color: 'purple', importance: 'major', se: null,
+    text: '{name}は、あなたが顔を逸らす癖を覚えた…'
+  },
+  giveMp: {
+    mark: '♥', color: 'purple', importance: 'major', se: null,
+    text: '{name}に、自分から魔力を差し出した…（-{amount}）'
+  },
+  sweetDeal: {
+    mark: '▼', color: 'purple', importance: 'major', se: 'debuffDown',
+    text: '{name}との甘い取引…その場で楽になった代わりに、尻の耐性が下がった（{from} → {to}）'
+  },
+  pressureUp: {
+    mark: '▼', color: 'purple', importance: 'minor', se: null,
+    text: '{name}の重圧が増していく…（{stage}段）'
+  },
+  acceptGrow: {
+    mark: '▲', color: 'gold', importance: 'major', se: 'enemyGrow',
+    text: '{name}は、自分から受け入れてもらえて成長した…'
+  },
+  memoryEscape: {
+    mark: '♥', color: 'purple', importance: 'major', se: null,
+    text: '{name}は、逃げたことを覚えた…（次は、もっと抜け出しにくい）'
+  },
+  memoryLearn: {
+    mark: '♥', color: 'purple', importance: 'major', se: null,
+    text: '{name}は、逃げ方を覚えた…（同じ逃げ方は効きにくくなる）'
+  },
+  memoryKamo: {
+    mark: '♥', color: 'purple', importance: 'major', se: null,
+    text: '{name}に「カモ」認定された…（おねだりが増える）'
+  },
+  memoryGiveUp: {
+    mark: '♥', color: 'purple', importance: 'major', se: null,
+    text: '{name}は、あなたが諦めたことを覚えた…'
+  },
+  maidCall: {
+    mark: '!', color: 'pink', importance: 'major', se: null,
+    text: '{name}の呼び鈴で、メイドたちが集まってくる…（{count}人）'
+  },
+  rangedAccept: {
+    mark: '♥', color: 'pink', importance: 'major', se: null,
+    text: '{name}の誘惑に引き寄せられていく…'
+  },
   goldGain: {
     mark: '◇', color: 'gold', importance: 'minor', se: null,
     text: '{amount}G を手に入れた（所持金 {total}G）'
@@ -277,7 +361,7 @@ export const LOG_KINDS = {
   },
   itemStolen: {
     mark: '▼', color: 'gold', importance: 'major', se: null,
-    text: '{name}に「{item}」を盗まれた…（商人ちゃんの店で買い戻せる）'
+    text: '{name}に「{item}」を盗まれた…（行商ちゃんの店で買い戻せる）'
   },
   tribute: {
     mark: '♥', color: 'gold', importance: 'major', se: null,
@@ -309,7 +393,11 @@ export const LOG_KINDS = {
   },
   merchantHere: {
     mark: '◇', color: 'gold', importance: 'minor', se: null,
-    text: 'どこかから、商人ちゃんの呼び声が聞こえる…'
+    text: 'どこかから、行商ちゃんの呼び声が聞こえる…「いらっしゃいませ♪」'
+  },
+  pairWatched: {
+    mark: '♥', color: 'pink', importance: 'major', se: null,
+    text: '{a}と{b}から、目が離せない……'
   },
   pairStart: {
     mark: '♥', color: 'pink', importance: 'major', se: null,

@@ -26,10 +26,14 @@
 // windup: 予備動作（構え）の追加キュー。prepareSkill のときに start として流す。
 import { WAVE1_STAGES } from './skillStagesWave1.js';
 import { WAVE2_STAGES } from './skillStagesWave2.js';
+import { WAVE3_STAGES } from './skillStagesWave3.js';
+import { WAVE4_STAGES } from './skillStagesWave4.js';
 
 export const SKILL_STAGES = {
   ...WAVE1_STAGES,
   ...WAVE2_STAGES,
+  ...WAVE3_STAGES,
+  ...WAVE4_STAGES,
   drainBerochu: {
     name: 'どれいんべろちゅー',
     flashSec: 0.25,

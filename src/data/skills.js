@@ -11,6 +11,8 @@
 //   advancedFrom  上位技の場合、習得の条件になる拘束技
 import { WAVE1_SKILL_DEFS } from './skillsWave1.js';
 import { WAVE2_SKILL_DEFS } from './skillsWave2.js';
+import { WAVE3_SKILL_DEFS } from './skillsWave3.js';
+import { WAVE4_SKILL_DEFS } from './skillsWave4.js';
 
 export const SKILL_DEFS = {
   normalAttack: { category: 'attack', fx: 'hit', se: 'thud' },
@@ -81,5 +83,7 @@ export const SKILL_DEFS = {
   // ---- 前半9体（skillsWave1.js）----
   ...WAVE1_SKILL_DEFS,
   // ---- 後半9体（skillsWave2.js）----
-  ...WAVE2_SKILL_DEFS
+  ...WAVE2_SKILL_DEFS,
+  ...WAVE3_SKILL_DEFS,
+  ...WAVE4_SKILL_DEFS
 };

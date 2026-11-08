@@ -3,6 +3,7 @@
 // 複数の敵に囲まれやすいよう、大広間・広めの部屋・幅2〜3マスの通路で作る。敵は数体ずつの群れで置く。
 import { mulberry32 } from '../core/util.js';
 import { ENEMIES_BY_ID } from '../data/enemies.js';
+import { relatedSpecies } from '../data/enemyGroups.js';
 import { bfsDistances } from './gridMath.js';
 
 export const TILE = { WALL: 0, FLOOR: 1, STAIRS: 2 };
@@ -38,6 +39,13 @@ export function speciesPicker(floor, B, enemySpawnWeights = {}) {
         if (roll < 0) return entry.species;
       }
       return weighted.at(-1)?.species;
+    },
+    // 群れの仲間を選ぶ：B.dungeon.relatedPackChance の確率で、群れの頭と関連のある種族（同じまとまり）から
+    pickRelated(leaderSpecies, rnd, chance) {
+      const allowed = new Set(weighted.map((e) => e.species));
+      const related = relatedSpecies(leaderSpecies).filter((s) => allowed.has(s));
+      if (related.length && rnd() < chance) return related[Math.floor(rnd() * related.length)];
+      return this.pick(rnd);
     }
   };
 }
@@ -153,11 +161,15 @@ export function generateFloor(seed, floor, B, enemySpawnWeights = {}) {
     const size = Math.min(count - enemySpawns.length, ri(D.packSize.min, D.packSize.max));
     const near = spawnPool.filter((c) => Math.max(Math.abs(c.x - leader.x), Math.abs(c.y - leader.y)) <= D.packRadius);
     while (pack.length < size && near.length > 0) pack.push(near.splice(ri(0, near.length - 1), 1)[0]);
+    // 群れの頭を選び、仲間は関連のある敵が多くなるようにする（連携攻撃・絆のこすり合わせが起きやすい）
+    let packLeader = null;
     for (const c of pack) {
       const key = c.y * w + c.x;
       if (taken.has(key)) continue;
       taken.add(key);
-      enemySpawns.push({ x: c.x, y: c.y, species: pickSpecies() });
+      const sp = packLeader ? species.pickRelated(packLeader, rnd, D.relatedPackChance ?? 0) : pickSpecies();
+      packLeader ??= sp;
+      enemySpawns.push({ x: c.x, y: c.y, species: sp });
     }
   }
 

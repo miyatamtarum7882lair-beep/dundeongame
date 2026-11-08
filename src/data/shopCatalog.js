@@ -25,7 +25,12 @@ export const GEAR = {
   thickTrousers: { slot: 'hip', name: '厚手のズボン', resist: 8, dur: 24, price: 90 },
   chainGirdle: { slot: 'hip', name: '鎖帷子の腰当て', resist: 15, dur: 40, price: 210 },
   sturdyBoots: { slot: 'foot', name: '丈夫なブーツ', resist: 8, dur: 24, price: 90 },
-  knightGreaves: { slot: 'foot', name: '聖騎士の脛当て', resist: 15, dur: 40, price: 210 }
+  knightGreaves: { slot: 'foot', name: '聖騎士の脛当て', resist: 15, dur: 40, price: 210 },
+  // 触れたがりの手袋：攻撃が強くなる代わりに、攻撃するたびに必ず敵のチャームポイントに触れてしまう（剣でも）
+  clingyGloves: {
+    slot: 'hand', name: '触れたがりの手袋', resist: -6, dur: 60, price: 120, touchAlways: true, attackMul: 1.6,
+    desc: '攻撃 ×1.6。そのかわり、攻撃するたびに必ず敵のチャームポイントに触れてしまう（剣でも）。手への耐性 -6'
+  }
 };
 
 // 敵からの贈り物（呪いの装備）。誘惑に乗ったときなどに、無理やり着けさせられる
@@ -55,5 +60,5 @@ export const BASE_UPGRADES = {
   resistAll: { name: '心の鎧', desc: 'すべてのチャームポイントへの耐性 +3', max: 5, cost: (lv) => 25 + lv * 20 },
   startGold: { name: 'へそくり', desc: '冒険を始めるときの所持金 +50G', max: 5, cost: (lv) => 15 + lv * 10 },
   amulet: { name: 'お守りの持ち込み', desc: '冒険を始めるとき、身代わりのお守りを 1 つ持っていく', max: 2, cost: (lv) => 40 + lv * 40 },
-  merchantDiscount: { name: '常連さん', desc: '商人ちゃんの値段 -5%', max: 4, cost: (lv) => 30 + lv * 25 }
+  merchantDiscount: { name: '常連さん', desc: '行商ちゃんの値段 -5%', max: 4, cost: (lv) => 30 + lv * 25 }
 };

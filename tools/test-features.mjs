@@ -8,6 +8,7 @@ import { Unit } from '../src/dungeon/unit.js';
 import { rubAttrsOf, uniteNameOf } from '../src/battle/pairBond.js';
 import { collectDebuffs } from '../src/ui/debuffPanel.js';
 import { generateArena } from '../src/dungeon/generate.js';
+import { conditionOfRace } from '../src/battle/economy.js';
 
 function setup(specs = [['kitten', 6, 5]]) {
   const hero = new Unit({ id: 1, kind: 'hero', speciesId: 'hero', name: '主人公', tx: 5, ty: 5 });
@@ -246,6 +247,54 @@ assert.equal(uniteNameOf(rubAttrsOf('demonicChinaGirl', 'kitten')).includes('サ
   save.persistent.baseUpgrades = { maxMp: 2 };
   const hero = newRunHero(save.persistent, B.battle.levelUp);
   assert.equal(hero.maxMp, saveSchema.currentRun.hero.maxMp + 40);
+}
+
+
+// 拘束で吸われている間も、その子専用の蓄積デバフが進み、発症すれば永続段階へ近づく
+{
+  const { combat, save, enemies } = setup([['kitten', 6, 5]]);
+  const condId = conditionOfRace('kitten');
+  combat.startBound(enemies[0], 'kittenKissHold', true, { answer: 'resist', drainMul: 1 });
+  const before = save.currentRun.heroStatus.gauges[condId] ?? 0;
+  for (let i = 0; i < 25; i++) {
+    combat.hs.mp = combat.hs.maxMp;
+    combat.boundPulse(1.2);
+  }
+  assert.ok((save.currentRun.heroStatus.gauges[condId] ?? 0) > before, '拘束の吸収で、その子の蓄積デバフが進む');
+  assert.ok(save.persistent.conditioning[condId]?.onsetKeys.length > 0 || save.persistent.conditioning[condId]?.stage > 0, '発症して、永続段階へ近づく');
+}
+
+// 余韻中でも、蓄積デバフは進む
+{
+  const { combat, save, enemies } = setup([['kitten', 6, 5]]);
+  combat.climax.afterglowLeft = 5;
+  const condId = conditionOfRace('kitten');
+  withRandom(0.99, () => combat.useSkill(enemies[0], 'kittenTease', {}));
+  finish(combat);
+  combat.bindCondGain(enemies[0], 'kittenKissHold', 1);
+  assert.ok((save.currentRun.heroStatus.gauges[condId] ?? 0) > 0, '余韻中も進む');
+}
+
+// 拘束攻撃を受けると、その子専用の蓄積デバフが進む
+{
+  const { combat, save, enemies } = setup([['mikuGirl', 6, 5], ['kitten', 4, 5]]);
+  combat.startBound(enemies[0], 'mikuBegKiss', true, { answer: 'resist', drainMul: 1 });
+  assert.ok((save.currentRun.heroStatus.gauges[conditionOfRace('mikuGirl')] ?? 0) >= B.conditioning.bindHitGain);
+  combat.addBoundBinder(enemies[1], 'kittenKissHold');
+  assert.ok((save.currentRun.heroStatus.gauges[conditionOfRace('kitten')] ?? 0) >= B.conditioning.bindHitGain, '加わった子のぶんも進む');
+}
+
+// 離れた所からの誘惑を受け入れると、強く効き、自分から歩み寄って拘束される
+{
+  const near = setup([['mikuGirl', 9, 5]]);
+  const mp0 = near.combat.hs.mp;
+  withRandom(0.99, () => near.combat.useSkill(near.enemies[0], 'mikuBlowKiss', { choiceResolved: true, choiceAnswer: 'accept', choiceDrainMul: 1 }));
+  finish(near.combat);
+  assert.ok(near.combat.hs.mp < mp0);
+  assert.ok(near.logs.some((l) => l.kind === 'rangedAccept'));
+  assert.equal(Math.max(Math.abs(near.hero.tx - 9), Math.abs(near.hero.ty - 5)), 1, '自分から隣まで歩いていく');
+  assert.ok(near.combat.bound, 'そのまま拘束される');
+  assert.ok(near.combat.bound.surrenderRate >= B.temptation.rangedAccept.surrender);
 }
 
 console.log('features: all checks passed');

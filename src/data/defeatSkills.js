@@ -2,6 +2,8 @@
 // 「最後に負けた技」として記録できる技の一覧（暫定）
 import { WAVE1_SKILL_NAMES } from './skillsWave1.js';
 import { WAVE2_SKILL_NAMES } from './skillsWave2.js';
+import { WAVE3_SKILL_NAMES } from './skillsWave3.js';
+import { WAVE4_SKILL_NAMES } from './skillsWave4.js';
 
 export const DEFEAT_SKILLS = {
   normalAttack: { name: '通常攻撃', kind: 'basic' },
@@ -40,5 +42,7 @@ export const DEFEAT_SKILLS = {
   tailFeint: { name: 'しっぽフェイント', kind: 'special', attr: 'hip' },
   foxHipPress: { name: 'きつねの極上ヒッププレス', kind: 'special', attr: 'hip' },
   ...WAVE1_SKILL_NAMES,
-  ...WAVE2_SKILL_NAMES
+  ...WAVE2_SKILL_NAMES,
+  ...WAVE3_SKILL_NAMES,
+  ...WAVE4_SKILL_NAMES
 };

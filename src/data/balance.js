@@ -30,7 +30,7 @@ export const B = deepFreeze({
     edgeSharpness: 1.8,    // 大きいほど、中心の外ですぐ消える
     sizePx: 700,
     offsetPx: 210,
-    sideOffsetPx: 310,
+    sideOffsetPx: 380,     // 左右から拘束されたときの絵の位置（外側へ）
     anchorX: 640,
     anchorY: 360,
     outputPx: 384,
@@ -91,6 +91,7 @@ export const B = deepFreeze({
     drainPerLevel: 0.10,
     exp: { base: 12, perEnemyLevel: 6, need: 30, needPerLevel: 20 },
     levelUp: { hp: 10, mp: 8, healRate: 0.3 },
+    heroLevelMax: 1000,     // 主人公のレベルの上限
     regenRate: 0.01,
     hpToMpRate: 0.6,        // 絶頂以外の打撃は HP を減らさず、最大HP比 × この率 の MP を奪う
     defeatResistDrop: 5,
@@ -273,7 +274,170 @@ export const B = deepFreeze({
     footTrap: { range: 3, allyCharm: 4 },
     legDrain: { mpRate: 0.04, expRate: 0.05, range: 1, windup: true, allyCharm: 14, bonusWhen: { status: 'offBalance', mul: 1.5 } },
     fakeCry: { mpRate: 0.02, range: 2, allyCharm: 8 },
-    devilsLegTrap: { mpRate: 0.18, expRate: 0.05, range: 1, windup: true, allyCharm: 22 }
+    devilsLegTrap: { mpRate: 0.18, expRate: 0.05, range: 1, windup: true, allyCharm: 22 },
+
+    // ---- 追加18体・前半8体（unique）----
+    // 金髪メイドさん
+    maidChaseStep: { hpRate: 0.1, mpRate: 0.03, range: 1 },
+    blondeMaidHold: { mpRate: 0.12, range: 1 },
+    pathBlock: { mpRate: 0.03, range: 3, windup: true, evade: 0.3, allyCharm: 8 },
+    maidPursuit: { mpRate: 0.02, range: 6, evade: 0.2, allyCharm: 6 },
+    silentUrge: { mpRate: 0.06, range: 3, windup: true, evade: 0.2, allyCharm: 10 },
+    inescapableMaidHold: { mpRate: 0.2, expRate: 0.05, range: 1, windup: true, allyCharm: 20 },
+    // 甘やかしバニー
+    bunnyInvite: { hpRate: 0.08, mpRate: 0.04, range: 1 },
+    sweetBunnyHold: { mpRate: 0.12, range: 1 },
+    rewardWhisper: { mpRate: 0.04, range: 3, evade: 0.25, allyCharm: 8 },
+    pamperMagic: { mpRate: 0.02, healRate: 0.06, range: 3, allyCharm: 8 },
+    justALittleMore: { mpRate: 0.08, range: 3, windup: true, evade: 0.25, allyCharm: 12, loseHabitBonus: 0.12 },
+    supremeRewardHold: { mpRate: 0.2, expRate: 0.05, range: 1, windup: true, allyCharm: 20, loseHabitBonus: 0.12 },
+    // ヤンデレちゃん
+    loveTouch: { hpRate: 0.1, mpRate: 0.03, range: 1 },
+    yandereHipHold: { mpRate: 0.13, range: 1 },
+    foundYou: { mpRate: 0.03, range: 6, windup: true, evade: 0.2, allyCharm: 8 },
+    whyRunAway: { mpRate: 0.07, range: 4, windup: true, evade: 0.25, allyCharm: 10 },
+    obsessiveRecapture: { hpRate: 0.1, mpRate: 0.03, range: 5, windup: true, evade: 0.3, allyCharm: 10 },
+    eternalPossession: { mpRate: 0.22, expRate: 0.05, range: 1, windup: true, allyCharm: 22 },
+    // 小悪魔メイドさん
+    maidMischief: { hpRate: 0.08, mpRate: 0.04, range: 1 },
+    devilMaidHold: { mpRate: 0.12, range: 1 },
+    rewardOffer: { mpRate: 0.06, range: 4, windup: true, evade: 0.25, allyCharm: 10 },
+    serviceKiss: { mpRate: 0.08, expRate: 0.03, range: 1, windup: true, allyCharm: 12 },
+    quietMaster: { mpRate: 0.03, range: 3, evade: 0.25, allyCharm: 8 },
+    supremeService: { mpRate: 0.2, expRate: 0.06, range: 1, windup: true, allyCharm: 22 },
+    // キョンシーちゃん
+    hopTouch: { hpRate: 0.1, mpRate: 0.03, range: 1 },
+    jiangshiHold: { mpRate: 0.13, range: 1 },
+    jiangshiLeap: { hpRate: 0.1, mpRate: 0.03, range: 4, windup: true, evade: 0.3, allyCharm: 10 },
+    jiangshiHug: { mpRate: 0.08, range: 1, windup: true, allyCharm: 12 },
+    learnedEscape: { mpRate: 0.03, range: 3, evade: 0.2, allyCharm: 8 },
+    perfectJiangshiHug: { mpRate: 0.22, expRate: 0.05, range: 1, windup: true, allyCharm: 22 },
+    // 白銀の小悪魔
+    begTouch: { hpRate: 0.08, mpRate: 0.04, range: 1 },
+    silverDevilHold: { mpRate: 0.12, range: 1 },
+    pleaseListen: { mpRate: 0.06, range: 4, windup: true, evade: 0.25, allyCharm: 10 },
+    sulkyTempt: { mpRate: 0.03, range: 3, evade: 0.25, allyCharm: 8 },
+    secondHelping: { mpRate: 0.07, expRate: 0.03, range: 1, windup: true, allyCharm: 12 },
+    absoluteBegging: { mpRate: 0.2, expRate: 0.06, range: 1, windup: true, allyCharm: 22 },
+    // 無表情サキュバス
+    silentSweep: { hpRate: 0.1, mpRate: 0.03, range: 1 },
+    silentShackle: { mpRate: 0.13, range: 1 },
+    noUse: { mpRate: 0.03, range: 3, evade: 0.2, allyCharm: 8 },
+    giveUp: { mpRate: 0.07, range: 3, windup: true, evade: 0.2, allyCharm: 10 },
+    blindSpot: { hpRate: 0.1, mpRate: 0.03, range: 1, windup: true, evade: 0.3, allyCharm: 8 },
+    totalSurrenderHold: { mpRate: 0.22, expRate: 0.06, range: 1, windup: true, allyCharm: 22 },
+    // あまあま猫耳メイド
+    catHelp: { hpRate: 0.08, mpRate: 0.04, range: 1 },
+    catCareHold: { mpRate: 0.12, range: 1 },
+    careRecommend: { mpRate: 0.03, range: 3, evade: 0.25, allyCharm: 8 },
+    leaveItToMe: { mpRate: 0.07, range: 3, windup: true, evade: 0.25, allyCharm: 10 },
+    masterBreak: { mpRate: 0.04, range: 3, allyCharm: 8, bonusWhen: { status: 'dependent', mul: 1.5 } },
+    supremeCatService: { mpRate: 0.2, expRate: 0.05, range: 1, windup: true, allyCharm: 22 },
+
+    // ---- 追加18体・後半10体（elite）----
+    // 魔性のお嬢様
+    ladyHand: { hpRate: 0.11, mpRate: 0.04, range: 1 },
+    demonicKissHug: { mpRate: 0.15, range: 1 },
+    charmEye: { mpRate: 0.03, range: 4, windup: true, evade: 0.3, allyCharm: 10 },
+    sweetOrder: { mpRate: 0.08, range: 4, windup: true, evade: 0.25, allyCharm: 12 },
+    charmCascade: { mpRate: 0.08, expRate: 0.04, range: 1, windup: true, allyCharm: 14, bonusWhen: { status: 'charmed', mul: 1.6 } },
+    absoluteCharmEye: { mpRate: 0.24, expRate: 0.06, range: 4, windup: true, allyCharm: 26 },
+    // いじわる小悪魔ちゃん
+    weakSpotTouch: { hpRate: 0.1, mpRate: 0.03, expRate: 0.01, range: 1 },
+    weakAnalysisHold: { mpRate: 0.13, range: 1 },
+    weakDiagnosis: { mpRate: 0.03, range: 3, evade: 0.25, allyCharm: 8 },
+    weakPointDrain: { mpRate: 0.02, expRate: 0.1, range: 1, windup: true, evade: 0.2, allyCharm: 14, bonusWhen: { status: 'weakExposed', mul: 1.5 } },
+    weakRevealed: { mpRate: 0.06, expRate: 0.04, range: 3, windup: true, evade: 0.25, allyCharm: 12 },
+    completeLevelDrain: { mpRate: 0.12, expRate: 0.16, range: 1, windup: true, allyCharm: 26 },
+    // 控えめアイドル
+    shyStep: { hpRate: 0.09, mpRate: 0.04, range: 1 },
+    idolHold: { mpRate: 0.14, range: 1 },
+    sexyBeam: { mpRate: 0.05, range: 5, windup: true, evade: 0.3, allyCharm: 10 },
+    lookAtMe: { mpRate: 0.08, range: 5, windup: true, evade: 0.25, allyCharm: 12 },
+    heartfulEncore: { mpRate: 0.1, range: 5, windup: true, evade: 0.25, allyCharm: 14 },
+    centerStage: { mpRate: 0.24, expRate: 0.06, range: 5, windup: true, allyCharm: 26 },
+    // 堕落のお姉さん
+    sisterTease: { hpRate: 0.11, mpRate: 0.04, range: 1 },
+    ruinHipHold: { mpRate: 0.15, range: 1 },
+    sweetDealOffer: { mpRate: 0.02, range: 3, windup: true, evade: 0.2, allyCharm: 10 },
+    rewardHipAttack: { hpRate: 0.14, mpRate: 0.05, range: 1, windup: true, evade: 0.25, allyCharm: 10, bonusWhen: { status: 'corrupted', mul: 1.5 } },
+    justOnceMore: { mpRate: 0.04, range: 3, evade: 0.2, allyCharm: 10 },
+    ruinPamperPress: { mpRate: 0.24, expRate: 0.06, range: 1, windup: true, allyCharm: 26 },
+    // 桃髪サキュバス
+    manaSeekTouch: { hpRate: 0.09, mpRate: 0.05, range: 1 },
+    succubusHold: { mpRate: 0.16, range: 1 },
+    manaTaste: { mpRate: 0.06, range: 3, evade: 0.25, allyCharm: 10 },
+    giveMeMore: { mpRate: 0.05, range: 3, windup: true, evade: 0.25, allyCharm: 12 },
+    manaPlunder: { mpRate: 0.16, range: 1, windup: true, evade: 0.2, allyCharm: 16, bonusWhen: { status: 'manaLeak', mul: 1.4 } },
+    supremeManaHold: { mpRate: 0.3, expRate: 0.05, range: 1, windup: true, allyCharm: 26 },
+    // むちむち小悪魔
+    curvyTouch: { hpRate: 0.11, mpRate: 0.04, range: 1 },
+    curvyHipHold: { mpRate: 0.15, range: 1 },
+    lookBackTempt: { mpRate: 0.03, range: 4, evade: 0.25, allyCharm: 10 },
+    stillWatching: { mpRate: 0.07, range: 4, windup: true, evade: 0.25, allyCharm: 12 },
+    gazeHipAttack: { hpRate: 0.14, mpRate: 0.06, range: 1, windup: true, evade: 0.25, allyCharm: 12, gazeBonus: 0.25 },
+    gazeHipTrap: { mpRate: 0.24, expRate: 0.06, range: 1, windup: true, allyCharm: 26 },
+    // 青髪プリンセス
+    princessFingertip: { hpRate: 0.1, mpRate: 0.04, range: 1 },
+    princessEmbrace: { mpRate: 0.13, range: 1 },
+    quietOrder: { mpRate: 0.03, range: 4, evade: 0.25, allyCharm: 10 },
+    giveMeMana: { mpRate: 0.04, range: 3, windup: true, evade: 0.25, allyCharm: 12 },
+    royalLevy: { mpRate: 0.12, expRate: 0.04, range: 1, windup: true, allyCharm: 16 },
+    princessPlunder: { mpRate: 0.26, expRate: 0.06, range: 1, windup: true, allyCharm: 26 },
+    // 黒衣のシスター
+    quietAdmonish: { hpRate: 0.11, mpRate: 0.04, range: 1 },
+    blackPressHold: { mpRate: 0.14, range: 1 },
+    pressureNotice: { mpRate: 0.03, range: 4, windup: true, evade: 0.3, allyCharm: 10 },
+    willYouResist: { mpRate: 0.08, range: 3, windup: true, evade: 0.2, allyCharm: 12 },
+    silentPressure: { hpRate: 0.12, mpRate: 0.06, range: 1, windup: true, evade: 0.25, allyCharm: 12 },
+    absolutePressure: { mpRate: 0.26, expRate: 0.06, range: 1, windup: true, allyCharm: 26 },
+    // 白銀バニー
+    bunnyManaTouch: { hpRate: 0.1, mpRate: 0.05, range: 1 },
+    silverCling: { mpRate: 0.14, range: 1 },
+    limpHug: { mpRate: 0.07, range: 1, windup: true, evade: 0.25, allyCharm: 12 },
+    backOpen: { mpRate: 0.02, range: 4, windup: true, evade: 0.3, allyCharm: 8 },
+    expPlease: { mpRate: 0.03, expRate: 0.09, range: 1, windup: true, evade: 0.2, allyCharm: 14, backBonus: 1.8 },
+    silverPlunder: { mpRate: 0.2, expRate: 0.12, range: 1, windup: true, allyCharm: 26, backBonus: 1.5 },
+    // 強引な桃髪メイド
+    maidGuide: { hpRate: 0.08, mpRate: 0.05, range: 2 },
+    pinkGazeBind: { mpRate: 0.14, range: 1 },
+    faceThisWay: { mpRate: 0.04, range: 4, windup: true, evade: 0.3, allyCharm: 10 },
+    lookAwayQ: { mpRate: 0.08, range: 4, windup: true, evade: 0.25, allyCharm: 12 },
+    noEscapeMaid: { hpRate: 0.1, mpRate: 0.04, range: 4, windup: true, evade: 0.3, allyCharm: 10 },
+    pinkEscort: { mpRate: 0.24, expRate: 0.06, range: 1, windup: true, allyCharm: 26 }
+  },
+  // 後半10体の専用の仕組み（enemyTraits.js）
+  traits: {
+    charmChainStatuses: ['unfocused', 'weakened', 'manaLeak'],   // 魅了中に当たると連鎖して付く
+    weakLearnMul: 0.1,          // いじわる小悪魔ちゃん：盗めた回数ごとに、経験値ドレイン +10%
+    confidenceMul: 0.08,        // 控えめアイドル：自信1段ごとに技の威力 +8%
+    absorbPerStage: 300,        // 桃髪サキュバス：奪ったMPの累計がこの値ごとに1段（最大 memory.max）
+    absorbMul: 0.1,
+    gazeMax: 4,                 // むちむち小悪魔：視線ロックがこの値で動けなくなる
+    princessEverySec: 3,        // 青髪プリンセス：拘束がこの秒数続くごとに吸収 +12%（拘束ごとに戻る）
+    princessMul: 0.12,
+    princessMax: 5,
+    pressureEverySec: 4,        // 黒衣のシスター：この秒数ごとに重圧が1段（拘束ごとに戻る）
+    pressureDrainMul: 0.1,
+    pressureEscapeMul: 0.08,
+    pressureMax: 4,
+    backBindExpMul: 2.0,        // 白銀バニー：背面から拘束すると、経験値も直接吸う
+    faceAwayCut: 0.15,          // 強引な桃髪メイド：顔を逸らした回数ごとに、逸らす（回避）上乗せが減る
+    sweetDeal: { mp: 0.35, hp: 0.2, resistDrop: 1, grow: 80 },
+    giveMpGrow: 1.0             // 自分から差し出した MP のぶん、その子が経験値を得る倍率
+  },
+  // 追加18体の、敵ごとの記憶（enemyMemory.js）と専用の仕組み
+  memory: {
+    max: 5,
+    yandereEscapeMul: 0.1,      // ヤンデレちゃん：逃げた回数ごとの、その子の拘束の脱出必要数
+    jiangshiLearnMul: 0.12,     // キョンシーちゃん：覚えた逃げ方ごとの脱出必要数
+    kamoRequestMul: 0.5,        // 白銀の小悪魔：カモ認定すると、おねだりの間隔がこの倍率
+    kamoDrainMul: 1.25,
+    giveUpSurrender: 0.08,      // 無表情サキュバス：諦めた回数ごとの、拘束開始時の「身を任せ」
+    giveUpCap: 0.4,
+    acceptGrowExp: 60,          // 自分から受け入れたとき、その子が得る経験値（ご褒美の罠・過保護の罠など）
+    maidChorusMul: 1.35,        // メイドが2人以上で拘束すると、声をそろえて吸い上げる
+    maidCallRange: 30
   },
   // ずるっこ悪魔ちゃんの罠：仕掛ける範囲・消えるまでのターン数・踏んだときの蓄積
   traps: { radius: 2, lifeTurns: 15, condGain: 1.5, max: 8 },
@@ -294,16 +458,19 @@ export const B = deepFreeze({
     stageGainMul: 0.2,        // 永続段階1つごとの、ゲージの増え方の上乗せ
     stageFloor: 1,            // 永続段階1つごとの、ゲージの下限
     recoveryNeed: [4, 6, 8, 10],  // 段階 I〜IV を1つ下げるのに必要な対抗行動の回数
-    nearRange: 4
+    nearRange: 4,
+    bindHitGain: 1.5,         // 拘束攻撃を受けるたびに、その子専用の蓄積デバフが増える量
+    bindGainPerSec: 0.2,      // 拘束で吸われている間、その子専用の蓄積デバフが1秒ごとに増える量
+    climaxGainMul: 2          // 絶頂中（1秒ごと）はこの倍率
   },
   // 力比べ（ピンク髪きつねちゃん）
   contest: { base: 0.55, perLevel: 0.02, offBalancePenalty: 0.15, perGauge: 0.03, min: 0.15, max: 0.85 },
   debuffPanel: {
     columns: 3,
-    chipW: 180,
-    chipH: 34,
-    gap: 6,
-    rowGap: 16,           // 行の間。下に垂れる雫のぶん広めにとる
+    chipW: 150,
+    chipH: 24,
+    gap: 4,
+    rowGap: 5,            // 行の間（詰めて表示する）
     maxRows: 8,
     majorFrom: 0.55
   },
@@ -374,8 +541,13 @@ export const B = deepFreeze({
   pairBond: {
     durationSec: 30,
     stages: [10, 20],         // 能力上昇 → 負け癖の共有・部位の技の強化
-    startChance: 0.22,        // 主人公の1ターンごと、隣り合った二人が始める確率
-    bindStartChance: 0.12,    // 拘束中（1秒あたり）
+    startChance: 0.3,         // 主人公の1ターンごと、隣り合った二人が始める確率（見えている二人だけ）
+    bindStartChance: 0.16,    // 拘束中（1秒あたり）
+    relatedMul: 2.0,          // 関連のある二人（enemyGroups.js）は始めやすい
+    sameAttrMul: 1.4,         // 同じ部位どうしも始めやすい
+    hiddenStopSec: 4,         // 見えない間は止まり、この秒数見えないと終わる
+    watchCondGain: 0.12,      // 見せつけられている間、二人の蓄積デバフが1回ごとに増える量
+    watchStatusChance: 0.25,  // 段階1以降、目移り（目が離せない）になる確率
     maxActive: 2,
     range: 12,                // 主人公からこの距離までの敵だけ（見せるため）
     pulseSec: 1.3,
@@ -394,7 +566,27 @@ export const B = deepFreeze({
     mpRate: 0.22,
     expRate: 0.35,
     condGain: 1.2,
-    bindDrainMul: 1.3
+    bindDrainMul: 1.3,
+    groupChance: 0.2,         // 絆が無くても、同じまとまりの仲間と連携する確率
+    groupPowerMul: 0.8,       // 絆の無い連携は、少しだけ弱い
+    // 種類ごとの倍率（mp / exp / cond / bindDrain / surrender / noBind / bindDelay）
+    effects: {
+      chorus: { mp: 1.3, bindDrain: 1.2 },
+      rush: { mp: 1.1, surrender: 0.1 },
+      whisper: { mp: 1.0, cond: 1.6 },
+      doubleDrain: { mp: 1.2, exp: 2.2 },
+      judgment: { mp: 1.6, bindDelay: 2.0 },
+      command: { mp: 1.0, surrender: 0.3 },
+      capture: { mp: 1.0, surrender: 0.25, bindDrain: 1.2 },
+      lullaby: { mp: 1.1, surrender: 0.2 },
+      gaze: { mp: 1.0, cond: 1.4 },
+      kiss: { mp: 1.3 },
+      pafu: { mp: 1.2, surrender: 0.15 },
+      hipPress: { mp: 1.2 },
+      legLock: { mp: 1.1, surrender: 0.15 },
+      hand: { mp: 0.9, exp: 1.8 },
+      sandwich: { mp: 1.2, bindDrain: 1.15 }
+    }
   },
   // ---- お金・貢ぎ・装備・アイテム ----
   economy: {
@@ -413,6 +605,28 @@ export const B = deepFreeze({
     perfumeExpMul: 1.5,
     manaVialRate: 0.4,
     incenseDrop: 3
+  },
+  // 見つめてしまう：マウスで敵の上にカーソルを乗せ続ける（gaze.js）
+  gaze: {
+    startSec: 1.5,        // この秒数見つめると「目が離せない」
+    tickSec: 1.0,         // その後、この秒数ごとに蓄積デバフが進む
+    gainPerTick: 0.25,    // 1回に進む量（その子の蓄積デバフ）
+    rampPerSec: 0.15,     // 見つめ続けるほど強くなる（1秒ごと +15%）
+    rampMax: 2,           // 最大 +200%
+    statusTurns: 2,       // 「目が離せない」のターン数（見つめている間は更新され続ける）
+    lineChance: 0.3       // 1回ごとに、その子が何か言う確率
+  },
+  // 敵にアイテムを奪われ、その場で使われてしまう
+  itemSnatch: {
+    chance: 0.12,             // 隣にいる敵が、行動の代わりにポーチを漁る確率
+    bindChancePerSec: 0.04,   // 拘束中、1秒ごとに漁られる確率
+    cooldownTurns: 8,         // 同じ敵が次に漁るまで
+    healRate: 0.4,            // 魔力の小瓶：敵の HP 回復
+    mpStealRate: 0.15,        // 魔力の小瓶：口移しで主人公の MP を奪う（最大MP比）
+    incenseGain: 2,           // 安らぎの香：その子の匂いに変えて焚かれ、その子の蓄積デバフが増える
+    perfumeGain: 1,           // 誘惑の香水：見えている敵みんなの蓄積デバフが増える
+    temptTurns: 4,            // 浄めの雫：誘惑受容
+    amuletExp: 60             // 身代わりのお守り：キスで穢されて砕かれ、その子が経験値を得る
   },
   // 拘束中のおねだりに「お金を差し出す」（貢ぎ）
   tribute: {
@@ -434,7 +648,7 @@ export const B = deepFreeze({
     goldBonusPerLevel: 0.2,      // 恩恵：拾うお金 +20%/段
     acheChancePerLevel: 0.2      // 階の始まりに、その種族の負け癖が進む確率/段
   },
-  // 商人ちゃん
+  // 行商ちゃん
   merchant: {
     floorChance: 0.7,
     corruptionPriceMul: 0.12,    // 堕ち度1段ごとの値上がり
@@ -583,6 +797,7 @@ export const B = deepFreeze({
     },
     enemiesPerFloor: { min: 8, max: 11, perFloor: 2 },   // 階が深いほど perFloor ずつ増える
     packSize: { min: 2, max: 4 },     // 敵は数体ずつの群れで置く
+    relatedPackChance: 0.7,           // 群れの仲間が、頭と関連のある敵（enemyGroups.js）になる確率
     packRadius: 2,
     // 時間がたつと、見えない所から敵が増える（maxEnemies まで）
     reinforce: { everyTurns: 12, maxEnemies: 16, minPathDist: 10 },
@@ -765,7 +980,9 @@ export const B = deepFreeze({
     resistEvadeBonus: 0.55,   // 「避ける」を選んだときの回避率の上乗せ（必ず避けられるわけではない）
     cooldownTurns: 4,         // 同じ敵が選択肢を出せるようになるまでのターン数
     evolveManualAccept: 3,    // 自発的受容の累計で技が進化する回数
-    evolveTimeoutAccept: 4    // 時間切れ受容の累計で技が進化する回数
+    evolveTimeoutAccept: 4,   // 時間切れ受容の累計で技が進化する回数
+    // 離れた所からの誘惑を受け入れたとき：技が強く効き、自分から歩み寄ってそのまま拘束される
+    rangedAccept: { drainMul: 1.7, condMul: 1.6, bindDrainMul: 1.5, surrender: 0.35, stepSec: 0.22, maxSteps: 10 }
   },
   buffs: {
     durationTurns: 20
@@ -787,7 +1004,7 @@ export const B = deepFreeze({
     charmMax: 100
   },
   debug: {
-    heroLevelMax: 99,
+    heroLevelMax: 1000,
     spatialLog: false,
     bindLog: false
   }

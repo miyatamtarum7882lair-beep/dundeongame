@@ -1,5 +1,5 @@
 // File: src/ui/shopView.js
-// 商人ちゃんの店。お金のほかに「経験値払い」もできる。堕ち度が上がるほど値段が上がる。
+// 行商ちゃんの店。お金のほかに「経験値払い」もできる。堕ち度が上がるほど値段が上がる。
 //   道具 / 装備 / 呪いを外す（敵からの贈り物）/ 買い戻し（盗まれた物）/ 取引（負け癖と引き換えに値引き）
 // 一枚絵は public/assets/portraits/merchant.(png|jpg|webp)。無ければ仮の絵を描く。
 import { ENEMIES, ENEMIES_BY_ID } from '../data/enemies.js';
@@ -28,13 +28,14 @@ function button(label, onClick, { primary = false, disabled = false, color = nul
   return b;
 }
 
+// 行商ちゃん（travelingMerchant.yaml）：丁寧で柔らかい接客口調。堕ち度が高いほど甘い誘いと含み笑いが増える
 const GREETINGS = [
-  'いらっしゃいませ♡ 冒険者さん、なにかお探し？',
-  'いらっしゃい♡ ……あら、ちょっとお疲れ？',
-  'また来てくれたの？♡ なんだか、とろんとした顔してる',
-  'ふふ、顔が赤いわよ？ ……あの子たちに、いっぱい可愛がられてきたんでしょ♡',
-  'すっかり堕ちちゃって♡ 今日は……なにで払ってくれるの？',
-  'もう、お金なんていらないでしょ？♡ 経験値で払って……ね？'
+  'いらっしゃいませ♪ 今日もいい品が入っていますよ。',
+  'お支払いは、お金か経験値から選べますよ。',
+  'あら、お客さま。少しお疲れのご様子ですね？',
+  'ふふ、経験値払いにも慣れてきましたね♡',
+  'あら、またいらしたんですね。今日は何を差し出してくださいます？♡',
+  'お客さま、もうお金なんて要りませんよね？♡ ……経験値で、いかがですか？'
 ];
 
 export function openShop({ save, B, eco, loadPortrait, playSe, onClose }) {
@@ -88,12 +89,12 @@ export function openShop({ save, B, eco, loadPortrait, playSe, onClose }) {
     g.fillStyle = '#ffe3f2';
     g.font = `bold 22px ${B.ui.fontFamily}`;
     g.textAlign = 'center';
-    g.fillText('商人ちゃん', 170, 80);
+    g.fillText('行商ちゃん', 170, 80);
     g.font = `13px ${B.ui.fontFamily}`;
     g.fillText('（一枚絵は準備中）', 170, 104);
   }
   drawPlaceholder();
-  void loadPortrait('merchant').then((img) => {
+  void loadPortrait('gyousyoumaid').then((img) => {
     if (!img) return;
     const g = art.getContext('2d');
     const iw = img.naturalWidth || img.width;
@@ -113,13 +114,13 @@ export function openShop({ save, B, eco, loadPortrait, playSe, onClose }) {
 
   function afterPay(res, okLine) {
     if (!res.ok) {
-      say(method === 'gold' ? 'お金が足りないなら……経験値で、いいよ？♡' : res.message);
+      say(method === 'gold' ? 'お金が足りませんか？ ……経験値で、いいよ？♡' : res.message);
       playSe('choiceWarning');
       render();
       return false;
     }
     if (res.paidExp) {
-      say(res.levelsLost > 0 ? 'んっ……♡ レベルごと、いただいちゃった♡' : 'ちゅ……♡ 経験値、たしかにいただきました');
+      say(res.levelsLost > 0 ? 'んっ……♡ レベルごと、いただいちゃいました♡' : '経験値でのお支払い、確かにいただきました♪');
       playSe('expDrained');
     } else {
       say(okLine);
@@ -139,7 +140,7 @@ export function openShop({ save, B, eco, loadPortrait, playSe, onClose }) {
     for (const [id, label] of [['gold', 'お金で払う'], ['exp', '経験値で払う']]) {
       head.append(button(label, () => {
         method = id;
-        if (id === 'exp') say('経験値で払ってくれるの？♡ ……ふふ、たっぷり吸ってあげる');
+        if (id === 'exp') say('経験値でのお支払いですね♡ ……ふふ、たっぷりいただきますよ');
         render();
       }, { primary: method === id, color: id === 'exp' ? PINK : GOLD }));
     }
@@ -172,32 +173,32 @@ export function openShop({ save, B, eco, loadPortrait, playSe, onClose }) {
     if (tab === 'items') {
       for (const [id, it] of Object.entries(ITEMS)) {
         const price = eco.price(it.price);
-        row(`${it.name}（所持 ${p.consumables[id] ?? 0}）`, it.desc, cost(price), button('買う', () => afterPay(eco.buyItem(id, method), `${it.name}ね、まいどあり♡`), { primary: true }));
+        row(`${it.name}（所持 ${p.consumables[id] ?? 0}）`, it.desc, cost(price), button('買う', () => afterPay(eco.buyItem(id, method), `はい、『ちゃり～ん……♡』 ${it.name}、お買い上げありがとうございます♪`), { primary: true }));
       }
     } else if (tab === 'gear') {
       for (const [id, g] of Object.entries(GEAR)) {
         const cur = p.equipment.slots[g.slot];
         const note = cur?.kind === 'gift' ? `　※いまは「${cur.name}」が外れないので、袋にしまわれます` : '';
-        row(`${g.name}（${SLOT_NAMES[g.slot]}）`, `${SLOT_NAMES[g.slot]}への耐性 +${g.resist}・耐久 ${g.dur}（拘束されるたびに溶かされる）${note}`, cost(eco.price(g.price)),
-          button('買う', () => afterPay(eco.buyGear(id, method), `${g.name}……あの子たちに溶かされないといいわね♡`), { primary: true }));
+        row(`${g.name}（${SLOT_NAMES[g.slot]}）`, `${g.desc ?? `${SLOT_NAMES[g.slot]}への耐性 +${g.resist}`}・耐久 ${g.dur}（拘束されるたびに溶かされる）${note}`, cost(eco.price(g.price)),
+          button('買う', () => afterPay(eco.buyGear(id, method), `${g.name}ですね♪ ……あの子たちに溶かされないと、いいですね♡`), { primary: true }));
       }
     } else if (tab === 'gift') {
       const gifts = SLOTS.map((s) => p.equipment.slots[s]).filter((g) => g?.kind === 'gift');
       if (!gifts.length) body.append(el('div', '呪いの装備は着けていない', { color: '#cbbbd0' }));
-      else say('あら、可愛いの着けてるのね♡ 外してあげてもいいけど……高いわよ？');
+      else say('あら、可愛いものを着けていますね♡ 外して差し上げてもいいですけど……お高いですよ？');
       for (const g of gifts) {
         row(`${g.name}（${g.level}段）`, `${ENEMIES_BY_ID[g.raceId]?.name ?? ''}からの贈り物。自分では外せない`, cost(eco.giftRemovePrice(g)),
-          button('外してもらう', () => afterPay(eco.removeGift(g.slot, method), 'はい、外れた♡ ……でも、体はまだ覚えてるかもね'), { primary: true }));
+          button('外してもらう', () => afterPay(eco.removeGift(g.slot, method), 'はい、外れましたよ♡ ……でも、体はまだ覚えているかもしれませんね'), { primary: true }));
       }
     } else if (tab === 'back') {
       if (!p.stolenItems.length) body.append(el('div', '盗まれた物は無い', { color: '#cbbbd0' }));
       p.stolenItems.forEach((st, i) => {
         const it = ITEMS[st.id];
         row(it.name, `${ENEMIES_BY_ID[st.raceId]?.name ?? ''}に盗まれた物。どこかで手に入れてきたみたい`, cost(eco.price(it.price * B.merchant.buyBackMul)),
-          button('買い戻す', () => afterPay(eco.buyBack(i, method), 'ちゃんと取り返してきてあげたの♡ ……割高だけどね'), { primary: true }));
+          button('買い戻す', () => afterPay(eco.buyBack(i, method), '買い戻しですね。こちらからどうぞ♪ ……少し割高ですけど♡'), { primary: true }));
       });
     } else {
-      body.append(el('div', 'その子への「負け癖」を1段差し出すと、次のお買い物が半額になる。', { color: '#ffe3f2', marginBottom: '8px' }));
+      body.append(el('div', '「負け癖を一段、差し出しますか？ 次のお買い物は半額ですよ♡」（選んだ子への負け癖が1段進む）', { color: '#ffe3f2', marginBottom: '8px' }));
       const sel = el('select', '', { padding: '6px', marginRight: '8px' });
       for (const e of ENEMIES.filter((x) => p.codex.entries[x.id]?.seen || x.id === dealRace)) {
         const opt = el('option', `${e.name}（いま ${p.debuffs.loseHabit.byRace[e.id] ?? 0} 段）`);
@@ -209,7 +210,7 @@ export function openShop({ save, B, eco, loadPortrait, playSe, onClose }) {
       body.append(sel, button('負け癖を差し出す', () => {
         const res = eco.dealLoseHabit(dealRace);
         if (res.ok) {
-          say(`${ENEMIES_BY_ID[dealRace].name}への負け癖、いただき♡ ……次は半額にしてあげる`);
+          say(`${ENEMIES_BY_ID[dealRace].name}への負け癖、一段いただきました♡ 次のお買い物は半額ですよ`);
           playSe('debuffDeepen');
         } else say(res.message);
         render();

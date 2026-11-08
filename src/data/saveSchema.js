@@ -85,7 +85,7 @@ export const saveSchema = {
     consumables: { soothingIncense: 0, purifyingDrop: 0, manaVial: 0, charmAmulet: 0, lurePerfume: 0 },
     // v14 装備（部位ごと）。敵からの贈り物（呪いの装備）もここ。ランをまたいで残る
     equipment: { slots: { mouth: null, hand: null, bust: null, hip: null, foot: null }, bag: [] },
-    stolenItems: [],   // v14 盗まれたアイテム { id, raceId }（商人ちゃんの店で買い戻せる）
+    stolenItems: [],   // v14 盗まれたアイテム { id, raceId }（行商ちゃんの店で買い戻せる）
     tributes: {},      // v14 種族ID → 貢いだお金の累計
     baseUpgrades: {},  // v14 拠点の強化 id → 段階
     tacticWeights: {

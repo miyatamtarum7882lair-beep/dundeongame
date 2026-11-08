@@ -25,7 +25,27 @@ export const ENEMY_THEMES = {
   whisperDevil: { main: '#ff8fbf', sub: '#b77cff', glow: '#fff0f6', accent: '#8a2d6e' },
   demonicChinaGirl: { main: '#ff3fa0', sub: '#d65cff', glow: '#ffd9f0', accent: '#ffcf5c' },
   sakuraEnchantress: { main: '#ff9fc6', sub: '#c070ff', glow: '#fff0f5', accent: '#ff5c9d' },
-  tricksterDevil: { main: '#ff2f8f', sub: '#9a4dff', glow: '#ffd2ea', accent: '#ff4f4f' }
+  tricksterDevil: { main: '#ff2f8f', sub: '#9a4dff', glow: '#ffd2ea', accent: '#ff4f4f' },
+  // 追加18体・前半8体
+  blondeMaid: { main: '#ff7ab8', sub: '#ffd36b', glow: '#fff1f7', accent: '#c94f8f' },
+  sweetBunny: { main: '#ff8fc4', sub: '#ffc6e0', glow: '#fff3f9', accent: '#ff5c9d' },
+  yandereGirl: { main: '#ff4f8a', sub: '#a0204f', glow: '#ffd9e6', accent: '#6a0030' },
+  littleDevilMaid: { main: '#ff6fb0', sub: '#9a6dff', glow: '#ffe3f1', accent: '#d61f6e' },
+  jiangshiGirl: { main: '#ff6f9f', sub: '#ffcf5c', glow: '#ffe6ee', accent: '#c2185b' },
+  silverDevil: { main: '#ff9fd0', sub: '#d6e2f0', glow: '#fff4fa', accent: '#ff5fa8' },
+  expressionlessSuccubus: { main: '#e06fb0', sub: '#8f7bff', glow: '#f3e6ff', accent: '#5a2d8a' },
+  sweetCatMaid: { main: '#ff7aa8', sub: '#e04f5f', glow: '#fff0f4', accent: '#ffd36b' },
+  // 追加18体・後半10体
+  demonicLady: { main: '#ff3fa0', sub: '#7a1f5c', glow: '#ffd9ee', accent: '#ffd36b' },
+  mischievousDevil: { main: '#ff5fa8', sub: '#9a4dff', glow: '#ffe1f0', accent: '#ff2d86' },
+  shyIdol: { main: '#ff7ac0', sub: '#7fd8ff', glow: '#fff0f8', accent: '#ffd36b' },
+  corruptionLady: { main: '#e0479a', sub: '#c070ff', glow: '#ffd9ee', accent: '#5a1040' },
+  pinkSuccubus: { main: '#ff4fa3', sub: '#d070ff', glow: '#ffd6ec', accent: '#8a1f5c' },
+  curvyLittleDevil: { main: '#ff4f8a', sub: '#ff9ac2', glow: '#ffe1ee', accent: '#c2185b' },
+  bluePrincess: { main: '#ff8fc4', sub: '#5f8fff', glow: '#f0f4ff', accent: '#ffd36b' },
+  blackSister: { main: '#d0307a', sub: '#2a1a3a', glow: '#f3d9ea', accent: '#8a2d6e' },
+  silverBunny: { main: '#ff8cc0', sub: '#d6e2f0', glow: '#ffffff', accent: '#ff4fa3' },
+  assertiveMaid: { main: '#ff8fc4', sub: '#ff4f8a', glow: '#fff0f7', accent: '#c94f8f' }
 };
 
 const DEFAULT_THEME = { main: '#ff7ac0', sub: '#d17aff', glow: '#ffe3f2', accent: '#ff3d8b' };

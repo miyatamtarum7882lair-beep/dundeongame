@@ -10,10 +10,13 @@
 
 - 21体のID・名前・ランク・主属性を登録。全員の一枚絵とスプライトを使用できる。
 - 1階は basic のみ、2階は basic と unique、3階は elite も含めて出現する。デバッグ画面で敵別の重みを上書きできる。
-- **21体すべてに固有技を実装済み**（通常技・拘束技・特殊技・上位技・選択肢付き技1つ・蓄積デバフ・台詞・演出・SE）。
+- **39体すべてに固有技を実装済み**（初期21体 ＋ 追加18体）（通常技・拘束技・特殊技・上位技・選択肢付き技1つ・蓄積デバフ・台詞・演出・SE）。
   - 初期3体：`src/data/skills.js` / `skillStages.js` / `enemyDialogue.js`
   - 前半9体：`skillsWave1.js` / `skillStagesWave1.js` / `enemyDialogueWave1.js`
   - 後半9体：`skillsWave2.js` / `skillStagesWave2.js` / `enemyDialogueWave2.js`
+  - 追加18体・前半8体（unique）：`skillsWave3.js` / `skillStagesWave3.js` / `enemyDialogueWave3.js`、敵ごとの記憶は `src/battle/enemyMemory.js`
+  - 追加18体・後半10体（elite）：`skillsWave4.js` / `skillStagesWave4.js` / `enemyDialogueWave4.js`、専用の仕組みは `src/battle/enemyTraits.js`
+  - 関連のある敵のまとまり（一緒に湧く・連携攻撃の種類）：`src/data/enemyGroups.js`
   - 蓄積デバフと一時状態：`src/data/conditioning.js`、技ごとの進化：`src/battle/skillEvolution.js`
 - 数値・台詞はすべて仮。実プレイで調整する。
 - 手属性を実装済み。`demonicChinaGirl` は胸（抱擁・弱点看破）と手（ハンド・妖手・お仕置き・搾取）の二つのチャームポイントを持つ。

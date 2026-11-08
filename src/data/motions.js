@@ -69,8 +69,6 @@ export const MOTIONS_BY_ID = Object.fromEntries(MOTIONS.map((m) => [m.id, m]));
 export const CHARACTER_MOTIONS = {
   hero: ['idle', 'walk_down', 'walk_up', 'walk_side', 'attack_down', 'attack_side', 'guard', 'hit',
          'bound', 'down'],
-  // 商人ちゃん：店先に立っているだけなので、待機とおじぎ（投げキッス）だけ
-  merchant: ['idle', 'skill_blowKiss'],
   priest: ['idle', 'walk_down', 'walk_up', 'walk_side', 'hit', 'panic', 'trance', 'flee',
            'cast', 'down'],
   kitten: ['idle', 'walk_down', 'walk_up', 'walk_side', 'hit',

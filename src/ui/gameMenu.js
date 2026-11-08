@@ -7,7 +7,7 @@
 import { ENEMIES, ENEMIES_BY_ID, ATTRS } from '../data/enemies.js';
 import { DEFEAT_SKILLS } from '../data/defeatSkills.js';
 import { SKILL_DEFS } from '../data/skills.js';
-import { CONDITIONS, PERMANENT_STAGE_NAMES } from '../data/conditioning.js';
+import { CONDITIONS, STATUSES, PERMANENT_STAGE_NAMES } from '../data/conditioning.js';
 import { charmAttrsOf } from '../data/charmAttrs.js';
 import { themeOf } from '../data/enemyThemes.js';
 import { collectDebuffs } from './debuffPanel.js';
@@ -17,6 +17,8 @@ import { DEBUG_ACTIONS } from '../core/debugTools.js';
 import { uniteNameOf, rubAttrsOf } from '../battle/pairBond.js';
 import { ITEMS, SLOTS, SLOT_NAMES, BASE_UPGRADES } from '../data/shopCatalog.js';
 import { ensureEconomy } from '../battle/economy.js';
+import { memoryLines } from '../battle/enemyMemory.js';
+import { buildInventoryDebug } from './inventoryDebug.js';
 
 const RANK_NAMES = { basic: 'ベーシック', unique: 'ユニーク', elite: 'エリート' };
 const ATTR_ORDER = ['mouth', 'bust', 'hand', 'hip', 'foot'];
@@ -80,6 +82,37 @@ function skillName(id) {
   return DEFEAT_SKILLS[id]?.name ?? id;
 }
 
+// 技の進化条件（図鑑）。進み具合も添える
+function evolveConditionLines(p, B, raceId, sid, kind) {
+  const def = SKILL_DEFS[sid] ?? {};
+  const st = p.skillEvolution?.[raceId]?.[sid] ?? {};
+  const prog = (need) => `（${Math.min(st.progress ?? 0, need)} / ${need}）`;
+  const lines = [];
+  if (kind === '上位') {
+    const from = def.advancedFrom;
+    lines.push(from ? `習得：「${skillName(from)}」で絶頂させられると、永続で覚える` : '習得：永続では覚えない');
+    lines.push(`または：1体に経験値を ${B.enemy.specialUnlockDrain} 吸われると、その子だけが使ってくる（その場限り）`);
+    return lines;
+  }
+  const rule = def.evolve;
+  const need = rule?.need ?? 1;
+  const condName = CONDITIONS[def.cond?.id]?.name ?? STATUSES[def.cond?.id]?.name ?? '蓄積デバフ';
+  const text = {
+    debuff_max: () => `この技で「${condName}」を最大まで溜められる`,
+    finish: () => `この拘束技で絶頂させられる${prog(need)}`,
+    repeated_use: () => `この技を ${need} 回受ける${prog(need)}`,
+    choice_count: () => `この技の誘惑を受け入れる・力比べに負ける${prog(need)}`,
+    exp_absorbed: () => `この技で経験値を ${need} 吸われる${prog(need)}`,
+    mp_zero: () => `この技で MP を 0 にされる${prog(need)}`
+  }[rule?.type];
+  lines.push(text ? `進化：${text()}` : '進化：この技は進化しない');
+  if (ENEMIES_BY_ID[raceId]?.choiceSkill === sid || st.manual || st.timeout) {
+    const T = B.temptation;
+    lines.push(`または：誘惑を自分から受け入れる（${Math.min(st.manual ?? 0, T.evolveManualAccept)} / ${T.evolveManualAccept}）、時間切れで受け入れる（${Math.min(st.timeout ?? 0, T.evolveTimeoutAccept)} / ${T.evolveTimeoutAccept}）`);
+  }
+  return lines;
+}
+
 /**
  * @param {object} o
  * @param {object} o.save
@@ -101,6 +134,7 @@ export function openGameMenu(o) {
   const p = ensureEconomy(save.persistent);
   let tab = o.tab ?? 'status';
   let showAll = false;         // 図鑑：未遭遇も表示（デバッグ）
+  let debugBagOpen = false;    // 持ち物：デバッグ欄を開いているか
   let selected = ENEMIES[0].id;
 
   const root = el('div', '', {
@@ -265,6 +299,7 @@ export function openGameMenu(o) {
       const stage = p.conditioning?.[condId]?.stage ?? 0;
       row('この子の蓄積デバフ', `${CONDITIONS[condId].name}${stage ? `（永続 ${PERMANENT_STAGE_NAMES[stage]}）` : ''}`, stage ? PINK : '#fff0f7');
     }
+    for (const text of memoryLines(p, id)) row('この子が覚えていること', text, PINK);
     head.append(art, info);
     detail.append(head);
 
@@ -281,16 +316,22 @@ export function openGameMenu(o) {
       const learned = kind === '上位' && hasLearned(p, id, sid);
       const lost = entry.defeatsBySkill?.[sid] ?? 0;
       table.append(el('span', kind, { color: '#bba' }));
-      const name = el('span', seen ? `${skillName(sid)}${evolved ? '・改' : ''}` : '？？？', { fontWeight: 'bold', color: evolved ? PINK : '#fff' });
+      // 技名は、まだ受けていない・進化していない技も表示する（進化すると「・改」）
+      const name = el('span', `${skillName(sid)}${evolved ? '・改' : ''}`, { fontWeight: 'bold', color: evolved ? PINK : seen ? '#fff' : '#bfb0c6' });
       table.append(name);
       const attr = SKILL_DEFS[sid]?.attr;
       table.append(el('span', attr ? ATTRS[attr]?.label ?? '' : '', { color: attr ? ATTRS[attr]?.color : '#fff' }));
       const status = [];
       if (kind === '上位') status.push(learned ? '習得済み' : '未習得');
-      if (evo && !evolved && evo.progress) status.push(`進化 ${evo.progress}`);
+      if (!seen) status.push('まだ受けていない');
       if (evolved) status.push('進化済み');
+      else if (kind !== '上位' && SKILL_DEFS[sid]?.evolve) status.push('未進化');
       if (lost) status.push(`この技で ${lost} 回負けた`);
       table.append(el('span', status.join('・'), { color: lost ? PINK : '#cbbbd0', fontSize: '12px' }));
+      const cond = el('div', '', { gridColumn: '2 / -1', fontSize: '12px', color: evolved || learned ? '#ffb9dc' : '#9fe3ff', marginBottom: '6px', lineHeight: '1.5' });
+      for (const line of evolveConditionLines(p, B, id, sid, kind)) cond.append(el('div', `└ ${line}`));
+      if (evolved) cond.append(el('div', `└ 進化後：「${skillName(sid)}・改」（吸う量 ×${B.skillEvolution.powerMul}）`, { color: PINK }));
+      table.append(cond);
     }
     skills.append(table);
     detail.append(skills);
@@ -385,9 +426,9 @@ export function openGameMenu(o) {
       const lv = el('input', '', { width: '64px', padding: '6px' });
       lv.type = 'number';
       lv.min = '1';
-      lv.max = '99';
+      lv.max = String(B.battle.heroLevelMax);
       lv.value = String(slot.level);
-      lv.addEventListener('change', () => { slot.level = Math.max(1, Math.min(99, Math.round(Number(lv.value) || 1))); });
+      lv.addEventListener('change', () => { slot.level = Math.max(1, Math.min(B.battle.heroLevelMax, Math.round(Number(lv.value) || 1))); });
       r.append(el('span', `${i + 1}`, { width: '18px', color: '#bba' }), sel, el('span', 'Lv'), lv);
       r.append(button('×', () => { arenaSpec.enemies.splice(i, 1); render(); }, { small: true }));
       arena.append(r);
@@ -522,6 +563,21 @@ export function openGameMenu(o) {
       });
     }
     body.append(eq);
+
+    // デバッグ：所持金・アイテム・装備を自由に変更（開いたまま操作できるよう、折りたたみ）
+    const dbg = card('');
+    const det = el('details');
+    det.open = debugBagOpen;
+    det.addEventListener('toggle', () => { debugBagOpen = det.open; });
+    det.append(el('summary', 'デバッグ：所持金・アイテム・装備を変更する', { cursor: 'pointer', color: '#ffb9dc', fontWeight: 'bold' }));
+    det.append(buildInventoryDebug(save, B, () => {
+      o.onSettings();
+      const top = body.scrollTop;
+      render();
+      body.scrollTop = top;
+    }));
+    dbg.append(det);
+    body.append(dbg);
   }
 
   // ---- 拠点（雪辱ポイントで、次の冒険を少しだけ楽にする）----

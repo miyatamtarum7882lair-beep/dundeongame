@@ -22,7 +22,7 @@ for (const id of WAVE2) {
   for (const scene of ['bind', 'request', 'climaxStart', 'defeat', 'danger', 'lowMp']) assert.ok(d.lines[scene], `${id}: 台詞 ${scene}`);
 }
 // 21体すべてに固有技がある
-assert.ok(ENEMIES.every((e) => e.skills.length > 0 && e.choiceSkill), '全員に固有技と選択肢がある');
+assert.ok(ENEMIES.every((e) => e.skills.length > 0 && (e.choiceSkill || e.id === 'silverBunny')), '全員に固有技と選択肢がある（白銀バニーは資料どおり選択肢なし）');
 
 function setup(raceId, { ex = 6 } = {}) {
   const hero = new Unit({ id: 1, kind: 'hero', speciesId: 'hero', name: '主人公', tx: 5, ty: 5 });

@@ -18,8 +18,23 @@ const rosterCsv = fs.readFileSync(path.join(root, 'mdungeon_pack', 'PROTOTYPE_ID
   });
 const attrIds = { '口': 'mouth', '胸': 'bust', '尻': 'hip', '足': 'foot', '全': 'all' };
 
-assert.equal(ENEMIES.length, 21);
-assert.equal(new Set(ENEMIES.map((enemy) => enemy.id)).size, 21);
+// 追加18体のうち、実装済みのもの（M_dangeon_additional_18_enemies_merchant/.../enemy_ids.csv）
+const extraCsv = fs.readFileSync(path.join(root, 'M_dangeon_additional_18_enemies_merchant', 'M_dangeon_additional', 'enemy_ids.csv'), 'utf8')
+  .replace(/^\uFEFF/, '').trim().split(/\r?\n/).slice(1)
+  .map((line) => {
+    const m = line.match(/^(\d+),(\w+),([^,]+),(\w+),"?([^"]*)"?$/);
+    return { id: m[2], name: m[3], rank: m[4], attrs: m[5].split(',').map((a) => ({ '口': 'mouth', '胸': 'bust', '尻': 'hip', '足': 'foot', '手': 'hand' })[a.trim()]) };
+  });
+const extra = extraCsv.filter((row) => ENEMIES_BY_ID[row.id]);
+assert.equal(ENEMIES.length, 21 + extra.length);
+assert.equal(new Set(ENEMIES.map((enemy) => enemy.id)).size, ENEMIES.length);
+for (const row of extra) {
+  const enemy = ENEMIES_BY_ID[row.id];
+  assert.equal(enemy.name, row.name, row.id);
+  assert.equal(enemy.rank, row.rank, row.id);
+  assert.deepEqual(new Set(enemy.sourceAttrs ?? [enemy.attr]), new Set(row.attrs), `${row.id}: 部位`);
+  rosterCsv.push({ id: row.id, name: row.name, rank: row.rank, attr: null });
+}
 assert.deepEqual(new Set(B.dungeon.enemySpecies), new Set(ENEMIES.map((enemy) => enemy.id)));
 for (const row of rosterCsv) {
   const enemy = ENEMIES_BY_ID[row.id];
@@ -27,7 +42,7 @@ for (const row of rosterCsv) {
   assert.equal(enemy.name, row.name);
   assert.equal(enemy.rank, row.rank);
   if (row.attr === '胸 / 手') assert.deepEqual(enemy.sourceAttrs, ['bust', 'hand']);
-  else assert.equal(enemy.attr, attrIds[row.attr]);
+  else if (row.attr) assert.equal(enemy.attr, attrIds[row.attr]);
   const portraitDir = path.join(root, 'public', 'assets', 'portraits');
   assert.ok(['png', 'jpg', 'jpeg', 'webp'].some((ext) =>
     fs.existsSync(path.join(portraitDir, `${row.id}.${ext}`))), `${row.id}: 一枚絵がない`);
@@ -54,4 +69,4 @@ for (let floor = 1; floor <= 3; floor++) {
 const onlyAngel = Object.fromEntries(ENEMIES.map((enemy) => [enemy.id, enemy.id === 'angelGirl' ? 1 : 0]));
 assert.ok(generateFloor(1, 1, B, onlyAngel).enemySpawns.every((spawn) => spawn.species === 'angelGirl'));
 
-console.log('enemy registry: 21 characters, assets, skills, and floor weights verified');
+console.log(`enemy registry: ${ENEMIES.length} characters, assets, skills, and floor weights verified`);

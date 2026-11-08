@@ -8,6 +8,8 @@
 import { ENEMIES_BY_ID, ATTRS } from '../data/enemies.js';
 import { charmAttrsOf } from '../data/charmAttrs.js';
 import { chebyshev } from '../dungeon/gridMath.js';
+import { sharedGroup, ENEMY_GROUPS } from '../data/enemyGroups.js';
+import { conditionOfRace } from './economy.js';
 
 // 部位の組み合わせごとの見せ方
 const RUB = {
@@ -20,12 +22,39 @@ const RUB = {
 
 export const pairKey = (a, b) => [a, b].sort().join('|');
 
+// こすり合わせ中の二人の声（進み具合で選ぶ。後ろほど甘い）
+const PAIR_LINES = {
+  mouth: ['ん……ちゅ♡', 'ちゅ、ちゅぅ……♡ 舌、からめて……', 'ぷは……♡ 見られてるよ、わたしたち', 'ん～っ♡ ……ねえ、あの人もキスしてほしそう'],
+  bust: ['むにゅ……♡', 'おっぱい、押し付けあいっこ♡', 'ぎゅーっ♡ ……やわらかいね', 'ほら、見てる見てる……♡ 羨ましいんだ'],
+  hip: ['すりすり♡', 'お尻、くっつけちゃお♡', 'むちっ……♡ ぐりぐり♡', 'ねえ、こっち見てるよ？ ……もっと見せてあげよっか'],
+  foot: ['すりっ……♡', '脚、からめちゃお♡', 'あったかい……♡', 'ふふ、足でされるの想像してる顔だね'],
+  hand: ['ぎゅっ……♡', '恋人つなぎ♡', 'にぎにぎ……♡', 'このおてて、あとであなたにも、ね？']
+};
+
 // 二人がこすり合わせる部位。共通の部位があればそれ、無ければ片方の部位を相手に（「胸にキス」など）
 export function rubAttrsOf(raceA, raceB) {
   const a = charmAttrsOf(raceA);
   const b = charmAttrsOf(raceB);
   const common = a.find((x) => b.includes(x));
   return common ? [common, common] : [a[0], b[0]];
+}
+
+// 連携攻撃（ユナイト攻撃）の種類。同じまとまりの二人は、そのまとまりの専用技。それ以外は、こすり合わせた部位の技
+// effect ごとの効果は combat.js の uniteEffect
+const ATTR_UNITE = {
+  mouth: { effect: 'kiss', line: 'ちゅ、ちゅっ♡ 二人で、ね♡', status: 'charmed' },
+  bust: { effect: 'pafu', line: 'むにゅ～っ♡ 挟んじゃう♡', status: 'limp' },
+  hip: { effect: 'hipPress', line: 'せーのっ、どーん♡', status: 'cornered' },
+  foot: { effect: 'legLock', line: '脚で、からめとっちゃう♡', status: 'pinned' },
+  hand: { effect: 'hand', line: 'なでなで……経験値、ちょうだい♡', status: 'weakExposed' }
+};
+
+export function uniteTypeFor(a, b, groupOf) {
+  const group = groupOf?.(a.speciesId, b.speciesId);
+  if (group) return { ...group.unite, group: group.name };
+  const attrs = a.bondAttrs ?? rubAttrsOf(a.speciesId, b.speciesId);
+  const base = attrs[0] === attrs[1] ? ATTR_UNITE[attrs[0]] : { effect: 'sandwich', line: '前と後ろから、挟んじゃお♡', status: 'dependent' };
+  return { name: uniteNameOf(attrs), ...base };
 }
 
 export function uniteNameOf(attrs) {
@@ -66,8 +95,8 @@ export class PairBonds {
     if (c.bound?.binders.some((b) => b.unit === u)) return false;
     const hero = c.exp.hero;
     const d = chebyshev(u.tx, u.ty, hero.tx, hero.ty);
-    // 主人公のすぐ隣にいる敵は、こすり合わせより主人公を狙う
-    return d >= 2 && d <= this.B.range;
+    // 主人公のすぐ隣にいる敵は、こすり合わせより主人公を狙う。見えている敵だけ（見せつけるため）
+    return d >= 2 && d <= this.B.range && c.exp.map.isVisible(u.tx, u.ty);
   }
 
   /**
@@ -83,7 +112,10 @@ export class PairBonds {
         if (a === b || a.id > b.id) continue;
         if (chebyshev(a.tx, a.ty, b.tx, b.ty) !== 1) continue;
         if ((a.bondDoneWith ?? []).includes(b.id)) continue;
-        const chance = (c.bound ? this.B.bindStartChance : this.B.startChance) * chanceScale;
+        const related = sharedGroup(a.speciesId, b.speciesId) ? this.B.relatedMul : 1;
+        const [x, y] = rubAttrsOf(a.speciesId, b.speciesId);
+        const same = x === y ? this.B.sameAttrMul : 1;
+        const chance = (c.bound ? this.B.bindStartChance : this.B.startChance) * chanceScale * related * same;
         if (Math.random() >= chance) continue;
         return this.start(a, b);
       }
@@ -142,6 +174,13 @@ export class PairBonds {
         this.stop(pair, 'joined');
         continue;
       }
+      const seen = c.exp.map.isVisible(pair.a.tx, pair.a.ty) || c.exp.map.isVisible(pair.b.tx, pair.b.ty);
+      if (!seen) {
+        pair.hidden = (pair.hidden ?? 0) + dt;
+        if (pair.hidden >= this.B.hiddenStopSec) this.stop(pair, 'hidden');
+        continue;
+      }
+      pair.hidden = 0;
       pair.elapsed += dt * pair.speed;
       pair.pulse += dt;
       if (pair.pulse >= this.B.pulseSec) {
@@ -182,6 +221,26 @@ export class PairBonds {
       c.fx({ type: 'callout', x: mid.x + (Math.random() - 0.5) * 50, y: mid.y + attrY - 40, text, color: Math.random() < 0.5 ? ta.main : tb.main, size: 16 + 8 * k, life: 1.0, wobble: 0.08 });
     }
     c.emit('se', { id: 'pairRub', tx: pair.a.tx, ty: pair.a.ty, gain: 0.6 + 0.5 * k, params: { attr: pair.attrs[0], progress: k } });
+    // ときどき、二人の声。進むほど甘くなる
+    if (Math.random() < 0.35 + 0.3 * k) {
+      const lines = PAIR_LINES[pair.attrs[0]] ?? PAIR_LINES.bust;
+      const who = Math.random() < 0.5 ? pair.a : pair.b;
+      c.speak(who, lines[Math.min(lines.length - 1, Math.floor(k * lines.length))]);
+    }
+    // 見せつけられて、目が離せない
+    if (!c.bound) {
+      for (const u of [pair.a, pair.b]) {
+        const condId = conditionOfRace(u.speciesId);
+        if (condId) c.handleEvents(c.conditions.gain(condId, this.B.watchCondGain * (1 + k), { floorKey: c.floorKey() }), u, null);
+      }
+      if (pair.stage >= 1 && !pair.watched && Math.random() < this.B.watchStatusChance) {
+        pair.watched = true;
+        c.handleEvents(c.conditions.addStatus('feinted', 2), pair.a, null);
+        c.emit('log', 'pairWatched', { a: pair.a.name, b: pair.b.name });
+        const hb = c.body(c.exp.hero);
+        c.fx({ type: 'callout', x: hb.x, y: c.head(c.exp.hero).y - 60, text: '（目が、離せない……♡）', color: c.theme(pair.a).main, size: 22, life: 1.6 });
+      }
+    }
   }
 
   applyStage(pair, stage) {
@@ -251,9 +310,17 @@ export class PairBonds {
     c.fx({ type: 'burst', x: mid.x, y: mid.y - 30, shapes: ['heart', 'heart', 'heartLine', 'star'], colors: [ta.main, tb.main, ta.glow, '#ffffff'],
       count: 34, speed: [80, 260], size: [6, 12], life: 1.3, gravity: -40, glow: true });
     c.fx({ type: 'callout', x: mid.x, y: mid.y - 120, text: `絆の契り：${name}`, color: ta.main, size: 26, life: 2.2, wobble: 0.06 });
-    c.later(0.7, () => {
-      if (c.exp.units.includes(a)) c.speak(a, 'これで、二人いっしょに……♡');
+    c.later(0.4, () => {
+      if (c.exp.units.includes(a)) c.speak(a, 'す〜……きっ♡♡♡ すきすきすきすき……♡');
     });
+    c.later(1.2, () => {
+      if (c.exp.units.includes(b)) c.speak(b, 'これで、二人いっしょに……♡ ねえ、次はあなたの番だよ？');
+    });
+    const group = sharedGroup(a.speciesId, b.speciesId);
+    c.fx({ type: 'callout', delay: 1.6, x: mid.x, y: mid.y - 150, text: group ? `${ENEMY_GROUPS[group].name}の連携を覚えた` : '二人の連携を覚えた', color: tb.main, size: 18, life: 1.8 });
+    c.fx({ type: 'speedLines', x: mid.x, y: mid.y, color: ta.main, count: 60, alpha: 0.5 });
+    c.fx({ type: 'flash', delay: 0.2, color: ta.main, alpha: 0.4 });
+    c.emit('pairCompleteCutin', { a, b, attrs: pair.attrs });
     c.emit('persist');
   }
 

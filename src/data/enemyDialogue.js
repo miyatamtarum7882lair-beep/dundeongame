@@ -8,10 +8,14 @@
 // 台詞は mdungeon_pack の口調設定に合わせた仮の文。
 import { WAVE1_DIALOGUE } from './enemyDialogueWave1.js';
 import { WAVE2_DIALOGUE } from './enemyDialogueWave2.js';
+import { WAVE3_DIALOGUE } from './enemyDialogueWave3.js';
+import { WAVE4_DIALOGUE } from './enemyDialogueWave4.js';
 
 export const ENEMY_DIALOGUE = {
   ...WAVE1_DIALOGUE,
   ...WAVE2_DIALOGUE,
+  ...WAVE3_DIALOGUE,
+  ...WAVE4_DIALOGUE,
   // 一人称：あたし／呼び方：ザコくん／生意気で軽快、挑発が多い
   kitten: {
     choice: {
@@ -194,7 +198,25 @@ export const CLIMAX_VOICE = {
   whisperDevil: 'びゅ〜……w',
   demonicChinaGirl: 'びゅー笑',
   sakuraEnchantress: 'びゅ〜……♡',
-  tricksterDevil: 'びゅ〜……w'
+  tricksterDevil: 'びゅ〜……w',
+  blondeMaid: 'びゅー。',
+  sweetBunny: 'びゅ〜……♡',
+  yandereGirl: 'びゅ〜……♡',
+  littleDevilMaid: 'びゅー笑',
+  jiangshiGirl: 'びゅー♡',
+  silverDevil: 'びゅー笑',
+  expressionlessSuccubus: 'びゅー。',
+  sweetCatMaid: 'びゅ〜……♡',
+  demonicLady: 'びゅー。',
+  mischievousDevil: 'びゅ〜……w',
+  shyIdol: 'びゅ〜……♡',
+  corruptionLady: 'びゅ〜……♡',
+  pinkSuccubus: 'びゅー♡',
+  curvyLittleDevil: 'びゅー笑',
+  bluePrincess: 'びゅー。',
+  blackSister: 'びゅー。',
+  silverBunny: 'びゅ〜……♡',
+  assertiveMaid: 'びゅー♡'
 };
 
 export function climaxVoiceFor(speciesId) {

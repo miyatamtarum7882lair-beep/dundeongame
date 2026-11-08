@@ -102,6 +102,96 @@ export const ENEMY_SYNTH = {
     heartbeat(rig, { start: 0.3, gain: 0.6 });
     heartbeat(rig, { start: 0.75, gain: 0.5 });
   },
+  // ---- 追加18体・前半8体 ----
+  // メイドたちの声がそろう（「せー、の……♡」）：三つの声が少しずつずれて重なる
+  maidChorus(rig) {
+    [0, 0.05, 0.1].forEach((d, i) => syllables(rig, { start: d, count: 3, f0: 2200 + i * 300, gain: 0.05 }));
+    vib(rig, { f0: 392, f1: 523, start: 0.2, dur: 0.8, gain: 0.07, attack: 0.25, vibHz: 6, vibDepth: 8 });
+    tone(rig, { type: 'triangle', f0: 1700, f1: 900, start: 0.02, dur: 0.035, gain: 0.06, attack: 0.001 });
+    heartbeat(rig, { start: 0.45, gain: 0.4 });
+  },
+  // ヤンデレの囁き：低く湿った吐息と、遅れて来る鼓動
+  yandereWhisper(rig) {
+    noise(rig, { filter: 'bandpass', f0: 900, f1: 600, q: 2.2, dur: 0.6, gain: 0.12, attack: 0.25 });
+    vib(rig, { type: 'sine', f0: 247, f1: 220, start: 0.1, dur: 0.7, gain: 0.07, attack: 0.3, vibHz: 4, vibDepth: 5 });
+    heartbeat(rig, { start: 0.55, gain: 0.55 });
+    heartbeat(rig, { start: 0.85, gain: 0.45 });
+  },
+  // 錠がかかる：かちり、と甘い鈴
+  lockClick(rig) {
+    tone(rig, { type: 'square', f0: 2400, f1: 1200, dur: 0.025, gain: 0.07, attack: 0.001 });
+    tone(rig, { type: 'triangle', f0: 320, f1: 160, start: 0.03, dur: 0.12, gain: 0.2, attack: 0.002 });
+    chime(rig, { f: 1175, start: 0.12, dur: 0.6, gain: 0.06 });
+  },
+  // ティーカップがかちんと鳴る（メイドのご奉仕）
+  teacupClink(rig) {
+    chime(rig, { f: 2637, dur: 0.5, gain: 0.08 });
+    chime(rig, { f: 3520, start: 0.05, dur: 0.4, gain: 0.05 });
+    sparkle(rig, { start: 0.15, gain: 0.04 });
+  },
+  // キョンシーの跳ねる音（ぴょん）
+  jiangshiHop(rig) {
+    boing(rig, { f0: 420, f1: 240, dur: 0.25, gain: 0.14 });
+    tone(rig, { type: 'triangle', f0: 140, f1: 70, start: 0.2, dur: 0.1, gain: 0.18, attack: 0.002 });
+  },
+  // お札がぺたりと貼られる
+  talismanSlap(rig) {
+    noise(rig, { f0: 2200, f1: 800, q: 1.2, dur: 0.08, gain: 0.18, attack: 0.002 });
+    tone(rig, { type: 'sine', f0: 660, f1: 880, start: 0.06, dur: 0.4, gain: 0.07, attack: 0.05 });
+    chime(rig, { f: 1568, start: 0.12, dur: 0.6, gain: 0.05 });
+  },
+  // しょんぼりした溜め息（甘えた鼻声）
+  sulkySigh(rig) {
+    vib(rig, { type: 'triangle', f0: 523, f1: 349, dur: 0.6, gain: 0.08, attack: 0.08, vibHz: 7, vibDepth: 10 });
+    noise(rig, { filter: 'bandpass', f0: 1400, f1: 700, q: 1.8, dur: 0.5, gain: 0.06, attack: 0.15 });
+  },
+  // 無表情サキュバス：時計の針のように冷たく刻む
+  coldTick(rig) {
+    for (let i = 0; i < 3; i++) tone(rig, { type: 'square', f0: 1800, f1: 1700, start: i * 0.18, dur: 0.02, gain: 0.05, attack: 0.001 });
+    tone(rig, { type: 'sine', f0: 196, f1: 196, start: 0.05, dur: 0.6, gain: 0.05, attack: 0.2 });
+  },
+  // 「ぜろ。」：低く落ちる一打
+  zeroDrop(rig) {
+    tone(rig, { type: 'triangle', f0: 220, f1: 55, dur: 0.5, gain: 0.4, attack: 0.003 });
+    noise(rig, { filter: 'lowpass', f0: 600, f1: 120, dur: 0.4, gain: 0.15, attack: 0.005 });
+    chime(rig, { f: 988, start: 0.3, dur: 0.9, gain: 0.05 });
+  },
+  // 猫の喉鳴らし（ごろごろ）
+  catPurr(rig) {
+    vib(rig, { type: 'sawtooth', f0: 55, f1: 50, dur: 0.7, gain: 0.05, attack: 0.15, vibHz: 24, vibDepth: 8 });
+    noise(rig, { filter: 'lowpass', f0: 300, f1: 200, dur: 0.7, gain: 0.08, attack: 0.15 });
+    chime(rig, { f: 1760, start: 0.3, dur: 0.5, gain: 0.04 });
+  },
+  // 「ふ～っ……♡」と吹きかける吐息
+  catBreath(rig) {
+    noise(rig, { filter: 'bandpass', f0: 1600, f1: 900, q: 1.4, dur: 0.7, gain: 0.14, attack: 0.3 });
+    vib(rig, { type: 'sine', f0: 659, f1: 523, start: 0.25, dur: 0.6, gain: 0.05, attack: 0.2, vibHz: 5, vibDepth: 6 });
+  },
+  // ---- 追加18体・後半10体 ----
+  // 王家の鈴：澄んだ高い鐘が、静かに重なる
+  royalBell(rig) {
+    [2093, 2637, 3136].forEach((f, i) => chime(rig, { f, start: i * 0.1, dur: 1.1, gain: 0.06 }));
+    vib(rig, { type: 'sine', f0: 523, f1: 523, start: 0.1, dur: 0.9, gain: 0.04, attack: 0.3, vibHz: 4, vibDepth: 4 });
+  },
+  // アイドルのきらめき
+  idolSparkle(rig) {
+    sparkle(rig, { count: 5, base: 2349, gain: 0.06 });
+    chime(rig, { f: 1568, start: 0.08, dur: 0.6, gain: 0.06 });
+    tone(rig, { type: 'triangle', f0: 880, f1: 1320, dur: 0.15, gain: 0.06, attack: 0.01 });
+  },
+  // ハート型のビーム：きゅいーんと伸びて、ぽわん
+  heartBeam(rig) {
+    vib(rig, { type: 'sawtooth', f0: 600, f1: 1800, dur: 0.45, gain: 0.05, attack: 0.05, vibHz: 18, vibDepth: 30 });
+    noise(rig, { f0: 2000, f1: 5000, q: 2, dur: 0.4, gain: 0.08, attack: 0.1 });
+    chime(rig, { f: 1760, start: 0.4, dur: 0.7, gain: 0.08 });
+    heartbeat(rig, { start: 0.5, gain: 0.4 });
+  },
+  // サキュバスの吸精：低く長く吸い込む
+  succubusSuck(rig) {
+    noise(rig, { filter: 'bandpass', f0: 400, f1: 1600, q: 3, dur: 0.9, gain: 0.18, attack: 0.4 });
+    vib(rig, { type: 'sine', f0: 110, f1: 220, dur: 0.9, gain: 0.12, attack: 0.3, vibHz: 6, vibDepth: 10 });
+    heartbeat(rig, { start: 0.6, gain: 0.5 });
+  },
   // ---- お金・贈り物・装備・アイテム・商人 ----
   // 貢ぐ：硬貨がちゃりんと落ちて、甘い鼓動
   coinTribute(rig) {
@@ -122,13 +212,26 @@ export const ENEMY_SYNTH = {
     vib(rig, { type: 'sine', f0: 523, f1: 196, dur: 0.8, gain: 0.08, attack: 0.05, vibHz: 7, vibDepth: 12 });
     boing(rig, { start: 0.15, gain: 0.08 });
   },
+  // 敵にポーチを漁られる：布ずれ、ごそごそ、最後に「ちゅぽん」
+  pouchRummage(rig) {
+    for (let i = 0; i < 4; i++) noise(rig, { f0: 1400 + i * 300, f1: 900, q: 1.8, start: i * 0.09, dur: 0.08, gain: 0.12, attack: 0.01 });
+    tone(rig, { type: 'sine', f0: 880, f1: 1760, start: 0.4, dur: 0.09, gain: 0.12, attack: 0.003 });
+    [1319, 1661, 1976].forEach((f, i) => chime(rig, { f, start: 0.5 + i * 0.06, dur: 0.4, gain: 0.05 }));
+  },
+  // 奪ったアイテムを、敵が甘く使う：ふわっと広がる和音と鼓動
+  snatchUse(rig) {
+    noise(rig, { filter: 'lowpass', f0: 600, f1: 2400, q: 1.2, dur: 0.6, gain: 0.1, attack: 0.2 });
+    [523, 659, 784, 1047].forEach((f, i) => vib(rig, { type: 'triangle', f0: f, start: 0.1 + i * 0.08, dur: 0.9, gain: 0.05, attack: 0.1, vibHz: 5, vibDepth: 9 }));
+    heartbeat(rig, { start: 0.45, gain: 0.45 });
+    heartbeat(rig, { start: 0.85, gain: 0.35 });
+  },
   // アイテムを使った
   itemUse(rig) {
     sparkle(rig, { gain: 0.07 });
     chime(rig, { f: 1319, dur: 0.6, gain: 0.07 });
     chime(rig, { f: 1760, start: 0.08, dur: 0.6, gain: 0.05 });
   },
-  // 商人ちゃんの店のベル
+  // 行商ちゃんの店のベル
   shopBell(rig) {
     chime(rig, { f: 1568, dur: 0.9, gain: 0.09 });
     chime(rig, { f: 2093, start: 0.12, dur: 0.9, gain: 0.07 });

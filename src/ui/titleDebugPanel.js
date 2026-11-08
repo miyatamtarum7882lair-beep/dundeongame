@@ -1,5 +1,6 @@
 import { ENEMIES } from '../data/enemies.js';
 import { saveSchema } from '../data/saveSchema.js';
+import { buildInventoryDebug } from './inventoryDebug.js';
 
 const make = (tag, text = '') => {
   const node = document.createElement(tag);
@@ -179,6 +180,9 @@ export function openTitleDebugPanel({ save, B, onClose }) {
   };
   addRow(hero, '最大HP', makeMaxStatButtons('maxHp', 10, 1, (delta) => { maxHpBonus += delta; }));
   addRow(hero, '最大MP', makeMaxStatButtons('maxMp', 10, 0, (delta) => { maxMpBonus += delta; }));
+
+  const inventory = section(panel, '持ち物（所持金・アイテム・装備）');
+  inventory.append(buildInventoryDebug(save, B, () => {}));
 
   const habits = section(panel, '永続デバフ');
   const d = save.persistent.debuffs;

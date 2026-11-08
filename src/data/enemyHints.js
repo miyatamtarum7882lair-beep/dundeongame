@@ -22,7 +22,25 @@ export const ENEMY_HINTS = {
   dreamLady: '眠気を解除し、長く足止めされる地形を避ける',
   whisperDevil: '囁きを遮断し、一度距離を取って体勢を立て直す',
   blondeBunny: '側面から仕掛け、正面の予備動作を見たら離れる',
-  pamperingLady: '甘やかしを断ち、後退して状態異常を解除する'
+  pamperingLady: '甘やかしを断ち、後退して状態異常を解除する',
+  blondeMaid: 'メイドが集まる前に1人ずつ倒す。催促には身構える',
+  sweetBunny: '一度負けた相手には近づかない。甘えるたびに強くなる',
+  yandereGirl: '逃げるほど執着される。拘束されたら一度で抜け出す',
+  littleDevilMaid: 'ご褒美は受け取らない。囁きの後はもがく回数を増やす',
+  jiangshiGirl: '飛びつきは横へ避ける。同じ逃げ方は覚えられる',
+  silverDevil: '最初のお願いを断る。カモにされると、おねだりが止まらない',
+  expressionlessSuccubus: '抵抗をやめない。足払いの予備動作で横へ',
+  sweetCatMaid: 'お世話は自分でやる。依存が溜まったら休憩時間に注意',
+  demonicLady: '魅了されている間は近づかない。命令には従わない',
+  mischievousDevil: '弱点を教わらない。経験値ドレインの予備動作を見たら離れる',
+  shyIdol: 'ビームの射線を切る。見つめるほど、あの子は自信をつける',
+  corruptionLady: '甘い取引は断る。その場だけの回復は、長い弱体化と引き換え',
+  pinkSuccubus: '吸わせるほど吸い方がうまくなる。魔力を差し出さない',
+  curvyLittleDevil: '振り返られたら目を逸らす。視線ロックが溜まると動けない',
+  bluePrincess: '長く拘束されるほど丁寧に吸われる。一度で抜け出す',
+  blackSister: '重圧は時間とともに増す。抵抗をやめない',
+  silverBunny: '背中を見せない。回り込まれたら向き直る',
+  assertiveMaid: '顔を逸らすたびに覚えられる。予備動作で距離を取る'
 };
 
 export const GENERAL_HINTS = [

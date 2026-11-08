@@ -11,6 +11,9 @@ import { loadSave, saveNow, scheduleSave, flushSave, saveCharmPointsNow } from '
 import { createLayers, fitLayers, beginFrame, clientToLogical } from './core/renderScale.js';
 import { GameClock } from './core/timer.js';
 import { Input } from './core/input.js';
+import { MouseHud } from './ui/mouseHud.js';
+import { HeartCursor } from './ui/heartCursor.js';
+import { corruptionState } from './data/corruption.js';
 import { EventState } from './core/eventState.js';
 import { TimeMode } from './core/timeMode.js';
 import { AudioEngine } from './core/audio.js';
@@ -49,6 +52,7 @@ import { DefeatRecapView } from './ui/defeatRecapView.js';
 import { CORRUPTION } from './data/corruption.js';
 import { openGameMenu } from './ui/gameMenu.js';
 import { openShop } from './ui/shopView.js';
+import { PairBondView } from './ui/pairBondView.js';
 import { rubAttrsOf } from './battle/pairBond.js';
 import {
   recordDefeat, getMarkScore, markTier, MARK_TIER_NAMES, recordEncounter
@@ -70,7 +74,7 @@ const debugHud = new DebugHud();
 const exploration = new Exploration(B, save);
 const dungeonView = new DungeonView(B);
 // 全キャラのドット絵を読み込む（読んでいないキャラは色の四角で仮表示される）
-dungeonView.preload(['hero', 'priest', 'merchant', ...ENEMIES.map((enemy) => enemy.id)]);
+dungeonView.preload(['hero', 'priest', 'gyousyoumaid', ...ENEMIES.map((enemy) => enemy.id)]);
 
 // ---- 演出 ----
 initPortraitLoader(B);
@@ -87,9 +91,50 @@ const battleFx = new BattleFx(B, {
 });
 
 const layers = createLayers(document.getElementById('game'), B);
-const refit = () => fitLayers(layers, B, save.settings.integerScaleOnly);
+const refit = () => {
+  fitLayers(layers, B, save.settings.integerScaleOnly);
+  mouseHud?.fit();
+};
+// マウスだけで遊ぶための、画面上の操作ボタン
+let mouseHud = null;
 refit();
 window.addEventListener('resize', refit);
+mouseHud = new MouseHud({
+  container: layers.container,
+  B,
+  actions: {
+    menu: () => openMenu('status'),
+    items: () => openMenu('bag'),
+    wait: () => pushExploreAction({ action: 'wait', source: 'pointer' }),
+    guard: () => pushExploreAction({ action: 'guard', source: 'pointer' }),
+    weapon: () => pushExploreAction({ action: 'weaponSwitch', source: 'pointer' }),
+    interact: () => pushExploreAction({ action: 'interact', source: 'pointer' }),
+    log: () => floatLog.toggleHistory(),
+    map: () => {
+      save.settings.showMinimap = !save.settings.showMinimap;
+      scheduleSave(save);
+    },
+    pause: () => clock.togglePause('esc')
+  }
+});
+// カーソルは小さなハート（堕ち度でピンクに染まり、脈打つ）
+const heartCursor = new HeartCursor(document.body);
+
+// カーソルの下にいる、見えている敵（見つめてしまう判定）
+function gazedEnemy() {
+  const p = input.pointer;
+  if (!p.overCanvas || titleActive || clock.paused || recapView.active() || enemyChoiceView.active()) return null;
+  if (eventState.state !== 'NONE' || (timeMode.mode !== 'TURN' && timeMode.mode !== 'BOUND')) return null;
+  const tile = tileAtPointer(p.x, p.y);
+  const u = exploration.unitAt(tile.tx, tile.ty);
+  return u?.kind === 'enemy' && exploration.map.isVisible(u.tx, u.ty) ? u : null;
+}
+
+// 画面上のボタンからの行動は、キー入力と同じ流れで探索へ渡す
+const pendingUiActions = [];
+function pushExploreAction(ev) {
+  pendingUiActions.push({ shift: false, repeat: false, ...ev });
+}
 const input = new Input(window);
 input.setBindings(save.settings.keyBindings);
 input.setPointerMapper((x, y) => clientToLogical(layers.hires, B, x, y));
@@ -192,6 +237,19 @@ const boundCharm = new BoundCharmView({
   getHero: () => exploration.hero
 });
 const later = (sec, fn) => (sec > 0 ? clock.after(sec, fn) : fn());
+// 敵どうしのこすり合わせのカットイン
+const pairView = new PairBondView({
+  loadPortrait: loadEnemyPortrait,
+  getPoint: (speciesId, attr) => getCharmPointsForAttr(save.persistent, speciesId, attr, B.charm)[0],
+  getCharmCfg: () => charmCfg,
+  fontFamily: B.ui.fontFamily
+});
+// 見えている組のうち、いちばん進んでいるもの（拘束中は拘束の絵が優先なので出さない）
+function shownPair() {
+  if (combat.bound || titleActive) return null;
+  const visible = combat.bonds.active.filter((pr) => exploration.map.isVisible(pr.a.tx, pr.a.ty) || exploration.map.isVisible(pr.b.tx, pr.b.ty));
+  return visible.sort((x, y) => y.elapsed - x.elapsed)[0] ?? null;
+}
 const heroMpRatio = () => (combat.hs.maxMp > 0 ? combat.hs.mp / combat.hs.maxMp : 1);
 const drainFx = new DrainFx({
   cfg: B.drainFx,
@@ -313,11 +371,21 @@ combat.on('heroExpDrained', (info) => {
   }
 });
 combat.on('debuffDeepen', ({ id }) => markDebuffDeepen(id, clock.time));
+// 誘惑に引き寄せられて、一歩ずつ歩いていく足音
+combat.on('heroPulled', () => {
+  stepAlt = !stepAlt;
+  audio.playSE('footstep', { params: { alt: stepAlt }, gain: 0.8 });
+});
 // 複数方向からの拘束の陣形：音のこもりと、画面の縁・表示
 let bindFormation = null;
 combat.on('bindFormation', ({ formation }) => {
   bindFormation = formation && formation.ids.length ? formation : null;
   audio.setMuffle(bindFormation?.muffle ?? 0);
+});
+// 小悪魔たちの連携：左右の耳元で囁かれ、しばらく音がこもる
+combat.on('uniteWhisper', ({ sec }) => {
+  audio.setMuffle(0.7);
+  later(sec, () => audio.setMuffle(bindFormation?.muffle ?? 0));
 });
 combat.on('learning', (events) => announceLearning(events));
 // 台詞の順番を作るための、少し遅れた処理
@@ -682,7 +750,7 @@ function endRecollection() {
   flushSave(save);
   floatLog.push({ text: '回想を終えた。元の冒険に戻った', color: 'white', mark: '◇' });
 }
-// 商人ちゃんにぶつかると、店が開く
+// 行商ちゃんにぶつかると、店が開く
 exploration.on('merchant', () => {
   if (shopView?.isOpen()) return;
   clock.pause('shop');
@@ -696,6 +764,9 @@ exploration.on('merchant', () => {
       scheduleSave(save);
     }
   });
+});
+exploration.on('travelStop', (reason) => {
+  if (reason === 'enemy') floatLog.push({ text: '甘い気配がして、足が止まった……', color: 'pink', mark: '♡' });
 });
 exploration.on('arenaExit', ({ reason }) => {
   const text = { clear: '模擬戦：全員を倒した！', defeat: '模擬戦：負けてしまった……', exit: '模擬戦を終える' }[reason] ?? '';
@@ -727,7 +798,8 @@ function handleInput() {
     return;
   }
   const exploreActions = [];
-  for (const ev of input.drain()) {
+  let clickUsed = false;
+  for (const ev of [...input.drain(), ...pendingUiActions.splice(0)]) {
     if (ev.action === 'pause') {
       clock.togglePause('esc');
       continue;
@@ -746,7 +818,20 @@ function handleInput() {
     }
     if (clock.paused) continue;
     if (timeMode.mode === 'BOUND') {
-      if (!exploration.phaseBusy() && ev.action === 'struggle') combat.struggle();
+      // おねだりの答えをクリックしたら、その1回は連打に数えない
+      if (ev.action === 'click' && bindRequest && combat.bound) {
+        const hit = bindRequestHits.find((r) => ev.x >= r.x && ev.x <= r.x + r.w && ev.y >= r.y && ev.y <= r.y + r.h);
+        if (hit) {
+          combat.answerBindRequest(hit.answer);
+          clickUsed = true;
+        }
+      }
+      if (!exploration.phaseBusy() && ev.action === 'struggle' && !clickUsed) combat.struggle();
+      continue;
+    }
+    if (ev.action === 'click' || ev.action === 'look') {
+      const tile = tileAtPointer(ev.x, ev.y);
+      if (tile) exploreActions.push({ action: ev.action === 'click' ? 'clickTile' : 'faceTile', tx: tile.tx, ty: tile.ty, source: 'pointer' });
       continue;
     }
     if (ev.action === 'map') {
@@ -922,8 +1007,8 @@ function drawPauseText(g) {
   g.fillStyle = '#ffffff';
   const x = B.render.logicalWidth / 2;
   const y = B.render.logicalHeight / 2;
-  g.strokeText('ポーズ（ESCで再開）', x, y);   // 暗転は使わない（3.4）
-  g.fillText('ポーズ（ESCで再開）', x, y);
+  g.strokeText('ポーズ（ESC か ▶再開 で戻る）', x, y);   // 暗転は使わない（3.4）
+  g.fillText('ポーズ（ESC か ▶再開 で戻る）', x, y);
   g.font = `bold 18px ${B.ui.fontFamily}`;
   g.strokeText('M：メニュー（ステータス・図鑑・回想部屋・設定）', x, y + 44);
   g.fillText('M：メニュー（ステータス・図鑑・回想部屋・設定）', x, y + 44);
@@ -996,10 +1081,114 @@ function drawBindFormation(g) {
   g.restore();
 }
 
+// おねだりの答えの当たり判定（論理座標）。描くたびに作り直す
+let bindRequestHits = [];
+
+// マウスの位置（論理座標）→ マス。キャラの絵（足元より上）を押しても、そのキャラのマスにする
+function tileAtPointer(x, y) {
+  const T = B.tile.size;
+  let best = null;
+  for (const u of exploration.units) {
+    if (u === exploration.hero || !exploration.map.isVisible(u.tx, u.ty)) continue;
+    const f = battleFx.toScreen(u.tx * T + T / 2, u.ty * T + T);
+    if (x >= f.x - T * 0.4 && x <= f.x + T * 0.4 && y >= f.y - B.tile.spriteH * 0.9 && y <= f.y) {
+      if (!best || f.y > best.fy) best = { tx: u.tx, ty: u.ty, fy: f.y };
+    }
+  }
+  if (best) return best;
+  const o = battleFx.toScreen(0, 0);
+  return { tx: Math.floor((x - o.x) / T), ty: Math.floor((y - o.y) / T) };
+}
+
+// マウスの下のマスを、ハートの枠で示す（敵なら攻撃、行商ちゃんなら話す、遠くなら歩く）
+function drawPointerTile(g) {
+  if (titleActive || !canExplore() || exploration.phaseBusy()) return;
+  const p = input.pointer;
+  const { logicalWidth: lw, logicalHeight: lh } = B.render;
+  if (p.x <= 0 || p.y <= 0 || p.x >= lw || p.y >= lh) return;
+  const tile = tileAtPointer(p.x, p.y);
+  const map = exploration.map;
+  if (tile.tx < 0 || tile.ty < 0 || tile.tx >= map.w || tile.ty >= map.h) return;
+  if (!map.explored[tile.ty * map.w + tile.tx]) return;
+  const hero = exploration.hero;
+  const unit = exploration.unitAt(tile.tx, tile.ty);
+  const self = tile.tx === hero.tx && tile.ty === hero.ty;
+  if (!self && !map.isWalkable(tile.tx, tile.ty)) return;
+  const d = Math.max(Math.abs(tile.tx - hero.tx), Math.abs(tile.ty - hero.ty));
+  let label = '';
+  let color = '#ffd6ec';
+  if (self) label = exploration.onStairs ? '階段を降りる' : '足踏み';
+  else if (unit?.kind === 'enemy') {
+    label = combat.gaze.locked && combat.gaze.target === unit ? '目が離せない……' : d === 1 ? '攻撃' : '近づく';
+    color = PINK_HOVER;
+    drawGazeRing(g, unit);
+  }
+  else if (unit?.kind === 'npc') { label = d === 1 ? '話す' : '近づく'; color = '#ffd36b'; }
+  else if (exploration.travel && exploration.travel.tx === tile.tx && exploration.travel.ty === tile.ty) label = '移動中';
+  const T = B.tile.size;
+  const s = battleFx.toScreen(tile.tx * T, tile.ty * T);
+  const pulse = 0.55 + 0.25 * Math.sin(clock.time * 6);
+  g.save();
+  g.lineWidth = 2.5;
+  g.strokeStyle = color;
+  g.globalAlpha = pulse;
+  g.shadowColor = color;
+  g.shadowBlur = 10;
+  g.beginPath();
+  g.roundRect(s.x + 3, s.y + 3, T - 6, T - 6, 10);
+  g.stroke();
+  g.globalAlpha = 1;
+  g.shadowBlur = 0;
+  if (label) {
+    g.font = `bold 12px ${B.ui.fontFamily}`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.lineJoin = 'round';
+    g.lineWidth = 4;
+    g.strokeStyle = 'rgba(40, 0, 25, 0.9)';
+    g.strokeText(`♡ ${label}`, s.x + T / 2, s.y + T - 10);
+    g.fillStyle = color;
+    g.fillText(`♡ ${label}`, s.x + T / 2, s.y + T - 10);
+  }
+  g.restore();
+}
+const PINK_HOVER = '#ff4fa3';
+
+// 見つめている敵の頭上に、溜まっていく輪（満ちると「目が離せない」）
+function drawGazeRing(g, unit) {
+  const gz = combat.gaze;
+  if (gz.target !== unit || gz.sec <= 0) return;
+  const th = combat.theme(unit);
+  const h = battleFx.toScreen(combat.body(unit).x, combat.head(unit).y - 30);
+  const k = Math.min(1, gz.sec / B.gaze.startSec);
+  const beat = 0.5 + 0.5 * Math.sin(clock.time * (6 + 6 * gz.intensity()));
+  g.save();
+  g.lineWidth = 3;
+  g.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+  g.beginPath();
+  g.arc(h.x, h.y, 11, 0, Math.PI * 2);
+  g.stroke();
+  g.strokeStyle = th.main;
+  g.shadowColor = th.main;
+  g.shadowBlur = 8 + 8 * beat;
+  g.beginPath();
+  g.arc(h.x, h.y, 11, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k);
+  g.stroke();
+  g.font = `bold ${gz.locked ? 14 + 3 * beat : 12}px ${B.ui.fontFamily}`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillStyle = gz.locked ? th.main : '#ffd6ec';
+  g.fillText('♥', h.x, h.y + 1);
+  g.restore();
+}
+
 // 拘束中のおねだり：脱出ゲージの上に、台詞と答え方と残り時間を出す
 function drawBindRequest(g) {
   const req = bindRequest;
-  if (!req || !combat.bound) return;
+  if (!req || !combat.bound) {
+    bindRequestHits = [];
+    return;
+  }
   const theme = combat.theme(req.unit);
   const { logicalWidth: lw, logicalHeight: lh } = B.render;
   const w = 720;
@@ -1029,13 +1218,27 @@ function drawBindRequest(g) {
   g.fillStyle = '#fff0f7';
   g.fillText(`「${req.line}」`, x + 16, y + 42, w - 32);
   g.font = `bold 14px ${B.ui.fontFamily}`;
-  g.fillStyle = theme.main;
-  g.fillText('1 受け入れる', x + 16, y + 72);
-  g.fillStyle = '#d9c6e6';
-  g.fillText('2 拒む（強く吸われる）', x + 128, y + 72);
+  // 答え：キー（1/2/3）でも、クリックでも選べる
   const gold = save.currentRun.gold;
-  g.fillStyle = gold >= B.tribute.min ? '#ffd36b' : '#7d6a5a';
-  g.fillText(`3 貢ぐ（${Math.max(B.tribute.min, Math.round(gold * B.tribute.rate))}G・脱出が進む）`, x + 300, y + 72);
+  const answers = [
+    ['accept', '1 受け入れる', theme.main, x + 16],
+    ['refuse', '2 拒む（強く吸われる）', '#d9c6e6', x + 128],
+    ['tribute', `3 貢ぐ（${Math.max(B.tribute.min, Math.round(gold * B.tribute.rate))}G・脱出が進む）`, gold >= B.tribute.min ? '#ffd36b' : '#7d6a5a', x + 300]
+  ];
+  bindRequestHits = [];
+  const mp = input.pointer;
+  for (const [answer, label, color, ax] of answers) {
+    const w2 = g.measureText(label).width;
+    const r = { answer, x: ax - 6, y: y + 60, w: w2 + 12, h: 24 };
+    bindRequestHits.push(r);
+    const hover = mp.x >= r.x && mp.x <= r.x + r.w && mp.y >= r.y && mp.y <= r.y + r.h;
+    g.fillStyle = hover ? 'rgba(255, 79, 163, 0.35)' : 'rgba(255, 255, 255, 0.08)';
+    g.beginPath();
+    g.roundRect(r.x, r.y, r.w, r.h, 7);
+    g.fill();
+    g.fillStyle = color;
+    g.fillText(label, ax, y + 72);
+  }
   g.fillStyle = 'rgba(0, 0, 0, 0.6)';
   g.fillRect(x + w - 166, y + 66, 150, 10);
   g.fillStyle = theme.main;
@@ -1184,7 +1387,7 @@ function drawGold(g) {
   g.restore();
 }
 
-// 商人ちゃんの名札（ぶつかると店が開く）
+// 行商ちゃんの名札（ぶつかると店が開く）
 function drawNpcLabels(g) {
   const m = exploration.merchant;
   if (!m || !exploration.units.includes(m) || !exploration.map.isVisible(m.tx, m.ty)) return;
@@ -1198,8 +1401,8 @@ function drawNpcLabels(g) {
   g.strokeStyle = 'rgba(40, 10, 20, 0.9)';
   g.fillStyle = '#ffd36b';
   const bob = Math.sin(clock.time * 3) * 2;
-  g.strokeText('♡ 商人ちゃんの店', p.x, p.y + bob);
-  g.fillText('♡ 商人ちゃんの店', p.x, p.y + bob);
+  g.strokeText('♡ 行商ちゃんの店', p.x, p.y + bob);
+  g.fillText('♡ 行商ちゃんの店', p.x, p.y + bob);
   g.restore();
 }
 
@@ -1250,7 +1453,9 @@ function render() {
   drainFx.drawEdge(gHires);
   drawEnemyLabels(gHires, dungeonView, save.persistent, B, clock.time);
   drawPairBonds(gHires);
+  pairView.draw(gHires, (u) => combat.theme(u), (pr) => combat.bonds.progress(pr), (pr) => combat.bonds.remainingSec(pr));
   drawNpcLabels(gHires);
+  drawPointerTile(gHires);
   battleFx.drawWorld(gHires);
   skillHud.drawFlash(gHires);
   battleFx.drawScreen(gHires);
@@ -1289,6 +1494,13 @@ function render() {
   drawBindRequest(gHires);
   drawBoundGauge(gHires);
   if (clock.paused) drawPauseText(gHires);
+  mouseHud.update({
+    visible: !titleActive && !recapView.active(),
+    weapon: combat.hs.weapon,
+    onStairs: exploration.onStairs,
+    paused: clock.paused,
+    bound: Boolean(combat.bound)
+  });
 }
 
 // ---- メインループ ----
@@ -1298,6 +1510,8 @@ function loop(nowMs) {
   debugHud.update(clock.realDtSec);
   inputGate.update(dt);
   handleInput();
+  combat.gaze.update(dt, gazedEnemy());
+  heartCursor.update(clock.realDtSec, { mood: corruptionState(save.persistent).mood, gaze: combat.gaze.intensity() });
   timeMode.update(dt);
   if (timeMode.mode === 'BOUND') {
     combat.boundUpdate(dt);
@@ -1305,6 +1519,7 @@ function loop(nowMs) {
   }
   combat.climax.update(dt);
   if (!titleActive && !combat.defeated) combat.bonds.update(dt);
+  pairView.update(dt, shownPair());
   combat.flashback.update(dt);
   enemyChoiceView.update(dt);
   eventState.update(clock.time);

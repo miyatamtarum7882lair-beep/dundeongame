@@ -40,6 +40,7 @@ export class Exploration extends Emitter {
     this.busyTotal = B.explore.moveSec;
     this.turnCount = 0;
     this.buffer = null;      // 押されたキーの一時保存
+    this.travel = null;      // マウスでクリックした目的地へ、1ターンずつ歩く { tx, ty, seen: Set }
     this.holdSec = 0;
     this.bannerSec = 0;
     this.onStairs = false;
@@ -116,7 +117,7 @@ export class Exploration extends Emitter {
     this.emit('floorStart', { floor, total: B.dungeon.floorsPerDungeon });
   }
 
-  // 商人ちゃん：始まりの部屋と大広間以外の部屋の真ん中あたりに、ときどき店を開いている
+  // 行商ちゃん（商人）：始まりの部屋と大広間以外の部屋の真ん中あたりに、ときどき店を開いている
   spawnMerchant(gen) {
     if (Math.random() >= this.B.merchant.floorChance) return null;
     const rooms = (gen.rooms ?? []).filter((r) => !r.hall
@@ -125,7 +126,7 @@ export class Exploration extends Emitter {
       const x = r.x + Math.floor(r.w / 2);
       const y = r.y + Math.floor(r.h / 2);
       if (!this.map.isWalkable(x, y) || this.unitAt(x, y)) continue;
-      this.merchant = this.spawn({ kind: 'npc', speciesId: 'merchant', name: '商人ちゃん', spriteId: 'merchant', color: '#ffd36b' }, x, y);
+      this.merchant = this.spawn({ kind: 'npc', speciesId: 'merchant', name: '行商ちゃん', spriteId: 'gyousyoumaid', color: '#ffd36b' }, x, y);
       return this.merchant;
     }
     return null;
@@ -146,6 +147,8 @@ export class Exploration extends Emitter {
     );
     // 贈り物を着けていると、その子の種族は匂いをたどって追ってくる
     if (this.combat.eco.luresRace(def.id)) enemy.lured = true;
+    // 逃げたことを覚えているヤンデレちゃんは、最初から居場所を知っている
+    if ((save.persistent.enemyMemory?.[def.id]?.escapes ?? 0) > 0) enemy.lured = true;
     // 指定技のフィニッシュで覚えた上位技は、次に出会った個体も使える
     enemy.advancedSkillUnlocked = hasLearned(save.persistent, def.id, def.advancedSkill);
     return enemy;
@@ -334,7 +337,15 @@ export class Exploration extends Emitter {
         this.buffer = { kind: 'interact', age: 0 };
       } else if (ev.action === 'weaponSwitch') {
         this.combat.toggleWeapon();   // ターンは消費しない
+      } else if (ev.action === 'clickTile') {
+        this.clickTile(ev.tx, ev.ty);
+      } else if (ev.action === 'faceTile') {
+        this.travel = null;
+        const dx = Math.sign(ev.tx - this.hero.tx);
+        const dy = Math.sign(ev.ty - this.hero.ty);
+        if (dx || dy) this.hero.setDir(dx, dy);   // 向きだけ変える。ターンは進まない
       }
+      if (ev.source === 'key') this.travel = null;   // キーを押したら、自動の歩きは止める
     }
   }
 
@@ -406,8 +417,79 @@ export class Exploration extends Emitter {
       return this.doMove(vec.dx, vec.dy, held.shift || b.shift);
     }
     if ((held.dx || held.dy) && this.holdSec >= grace) {
+      this.travel = null;
       return this.doMove(held.dx, held.dy, held.shift);
     }
+    if (this.travel) return this.travelStep();
+    return false;
+  }
+
+  // ---- マウス操作 ----
+  // クリックしたマス：自分 → 足踏み（階段の上なら降りる）、隣 → 1歩（敵なら攻撃・行商ちゃんなら話す）、遠く → そこまで歩く
+  clickTile(tx, ty) {
+    const hero = this.hero;
+    this.travel = null;
+    if (tx < 0 || ty < 0 || tx >= this.map.w || ty >= this.map.h) return;
+    if (tx === hero.tx && ty === hero.ty) {
+      this.buffer = { kind: this.onStairs ? 'interact' : 'wait', age: 0 };
+      return;
+    }
+    const d = chebyshev(tx, ty, hero.tx, hero.ty);
+    if (d === 1) {
+      this.buffer = { kind: 'move', dx: tx - hero.tx, dy: ty - hero.ty, shift: false, age: this.B.explore.diagonalGraceSec };
+      return;
+    }
+    if (!this.map.explored[ty * this.map.w + tx] || !this.walk(tx, ty)) return;
+    this.travel = { tx, ty, seen: new Set(this.visibleEnemyIds()), steps: 0 };
+  }
+
+  visibleEnemyIds() {
+    return this.units.filter((u) => u.kind === 'enemy' && this.map.isVisible(u.tx, u.ty)).map((u) => u.id);
+  }
+
+  // 目的地へ1歩。新しい敵が見えた・敵がすぐ近くにいる・道がふさがれたら止まる
+  travelStep() {
+    const t = this.travel;
+    const hero = this.hero;
+    const c = this.combat;
+    if (c.bound || c.choice || c.defeated) return this.stopTravel();
+    const newEnemy = this.visibleEnemyIds().some((id) => !t.seen.has(id));
+    const near = this.units.some((u) => u.kind === 'enemy' && chebyshev(u.tx, u.ty, hero.tx, hero.ty) <= 1);
+    if (t.steps > 0 && (newEnemy || near)) return this.stopTravel('enemy');
+    const targetUnit = this.unitAt(t.tx, t.ty);
+    const w = this.map.w;
+    const pass = (x, y) => {
+      if (!this.walk(x, y) || !this.map.explored[y * w + x]) return false;
+      if (x === t.tx && y === t.ty) return true;
+      const u = this.unitAt(x, y);
+      return !u || u.kind === 'ally' || u === hero;
+    };
+    const dist = bfsDistances(w, this.map.h, pass, t.tx, t.ty);
+    let best = null;
+    for (const dir of DIRS8) {
+      const nx = hero.tx + dir.dx;
+      const ny = hero.ty + dir.dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= this.map.h) continue;
+      const dv = dist[ny * w + nx];
+      if (dv < 0 || !canStep(this.walk, hero.tx, hero.ty, dir.dx, dir.dy)) continue;
+      if (!best || dv < best.dv) best = { dx: dir.dx, dy: dir.dy, dv };
+    }
+    if (!best) return this.stopTravel('blocked');
+    const arriving = hero.tx + best.dx === t.tx && hero.ty + best.dy === t.ty;
+    // 目的地に誰かいる（敵・行商ちゃん）なら、隣まで来たところで止まる（もう一度クリックで攻撃・話す）
+    if (arriving && targetUnit && targetUnit.kind !== 'ally') {
+      hero.setDir(best.dx, best.dy);
+      return this.stopTravel();
+    }
+    t.steps += 1;
+    const moved = this.doMove(best.dx, best.dy, false);
+    if (!moved || arriving) this.travel = null;
+    return moved;
+  }
+
+  stopTravel(reason = null) {
+    this.travel = null;
+    if (reason) this.emit('travelStop', reason);
     return false;
   }
 
@@ -423,7 +505,7 @@ export class Exploration extends Emitter {
     const ny = hero.ty + dy;
     const other = this.unitAt(nx, ny);
 
-    // 商人ちゃんに話しかける（ターンは進まない）
+    // 行商ちゃんに話しかける（ターンは進まない）
     if (other && other.kind === 'npc') {
       this.emit('merchant', other);
       return false;
@@ -626,7 +708,7 @@ export class Exploration extends Emitter {
   }
 
   phaseBusy() {
-    return Boolean(this.enemyPhase) || Boolean(this.defeatSeq);
+    return Boolean(this.enemyPhase) || Boolean(this.defeatSeq) || Boolean(this.combat.rangedPull);
   }
 
   updatePhase() {
